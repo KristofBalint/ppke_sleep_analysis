@@ -12,6 +12,12 @@ from scipy.signal import welch
 from helper_code import *
 import neurokit2 as nk
 import yasa
+from utils import HiddenPrints
+from pecg import Preprocessing as Pre
+from pecg.ecg import FiducialPoints as Fp
+from pecg.ecg import Biomarkers as Bm
+from get_hrv_bm import get_hrv_biomarkers
+#from get_spo2_bm import get_spo2_biomarkers #currently problematic due to using an old scipy version
 
 # ---------------------------------------------------
 # Configuration & Paths
@@ -37,6 +43,79 @@ DATA_TYPES = {
     "human": "_expert_annotations",
     "algo": "_caisr_annotations"
 }
+
+ALL_FEATURE_COLUMNS = [ "subject", "session", "channel", "category",
+                        # generic
+                        "mean", "std", "variance", "skewness", "kurtosis", "flatline_pct", "clipping_pct", "hf_power_ratio", "lf_power_ratio",
+                        # EEG
+                        "rms", "ptp", "max_amp", "dominant_freq", "rel_delta", "rel_theta", "rel_alpha", "rel_sigma", "rel_beta", "delta_beta_ratio",
+                        # Spindle Features (still in EEG)
+                        "spindle_count", "spindle_density", "spindle_mean_amp", "spindle_amp_std", "spindle_mean_duration",
+                        "spindle_duration_std", "spindle_mean_freq", "spindle_mean_relpower", "spindle_mean_rms", "spindle_total_duration",
+                        # ECG
+                        "flatline_duration", "is_flat", "amp_out_of_bounds", "hf_ratio_signal", "max_slope", "mean_hr", "hrv_sdnn",
+                        # HRV metrics (still in ECG)
+                        "AVNN", "SDNN","RMSSD","PNN50","SEM","PIP","IALS","PSS","PAS","SD1","SD2","alpha_1","alpha_2", "MSE",
+                        "TOTAL_POWER","VLF_POWER","LF_POWER","HF_POWER","VLF_NORM","LF_NORM","HF_NORM","LF_HF_RATIO",
+                        # EMG
+                        "powerline_ratio", "spec_peak_min_ratio",
+                        # Resp
+                        "mean_resp_rate", "resp_variability"
+                        # SpO2 biomarkers (still in Resp) #compatibility issues with old version
+                        #"AV","MED","Min","SD","RG","P","M","ZC","DI","ODI","DL_u","DL_sd","DA100_u","DA100_sd","DAmax_u","DAmax_sd",
+                        #"DD100_u","DD100_sd","DDmax_u","DDmax_sd","DS_u","DS_sd","TD_u","TD_sd","CA","CT","POD","AODmax","AOD100",
+                        #"ApEn","LZ","CTM","SampEn","DFA","PRSAc","PRSAad","PRSAos","PRSAsb","PRSAsa","AC","PSD_total","PSD_band","PSD_ratio","PSD_peak",
+                        ]
+
+def ensure_channel_output_schema(output_path, ALL_FEATURE_COLUMNS):
+
+    """
+    Ensures CHANNEL_OUTPUT.csv matches ALL_FEATURE_COLUMNS.
+    If columns differ, the file is rewritten with the correct header
+    and missing columns filled with zeros.
+    """
+
+    if not os.path.exists(output_path):
+        # Create empty file with correct header
+        df = pd.DataFrame(columns=ALL_FEATURE_COLUMNS)
+        df.to_csv(output_path, index=False)
+        print(f"Created new CHANNEL_OUTPUT with correct schema.")
+        return
+
+    # Load existing CSV
+    df = pd.read_csv(output_path)
+
+    existing_cols = set(df.columns)
+    expected_cols = set(ALL_FEATURE_COLUMNS)
+
+    missing_cols = expected_cols - existing_cols
+    extra_cols = existing_cols - expected_cols
+
+    if not missing_cols and not extra_cols:
+        print("CHANNEL_OUTPUT schema OK.")
+        return
+
+    print("CHANNEL_OUTPUT schema mismatch detected.")
+    print(f"Missing columns: {missing_cols}")
+    print(f"Extra columns: {extra_cols}")
+
+    # Add missing columns with zeros
+    for col in missing_cols:
+        df[col] = 0
+
+    # Remove columns that should not exist
+    if extra_cols:
+        df = df.drop(columns=list(extra_cols))
+
+    # Reorder columns to match ALL_FEATURE_COLUMNS
+    df = df.reindex(columns=ALL_FEATURE_COLUMNS)
+
+    # Rewrite CSV
+    df.to_csv(output_path, index=False)
+
+    print("CHANNEL_OUTPUT schema updated.")
+
+ensure_channel_output_schema(CHANNEL_OUTPUT, ALL_FEATURE_COLUMNS)
 
 rename_rules=load_rename_rules("channel_table.csv")
 print(rename_rules)
@@ -156,7 +235,7 @@ def concordance_cc(x, y):
     return (2 * cov_xy) / (var_x + var_y + (mean_x - mean_y)**2)
 
 
-def assess_signal_quality(raw_psg, category_lookup):
+def assess_signal_quality(raw_psg, category_lookup,hypnogram=None):
     sfreq = raw_psg.info["sfreq"]
     quality_metrics = []
 
@@ -240,6 +319,55 @@ def assess_signal_quality(raw_psg, category_lookup):
                 row_dict["rel_delta"] / (row_dict["rel_beta"] + 1e-6)
             )
 
+            try:
+                sp = yasa.spindles_detect(data, fs,hypno=hypnogram, include=(1,2))#There is processing in the team_code, so there is no reason to multiply the data by 1e6
+
+                if sp is not None:
+                    sp_summary = sp.summary()
+
+                    n_sp = len(sp_summary)
+                    recording_minutes = len(data) / fs / 60
+
+                    row_dict["spindle_count"] = n_sp
+                    row_dict["spindle_density"] = n_sp / recording_minutes
+
+                    row_dict["spindle_mean_amp"] = sp_summary["Amplitude"].mean()
+                    row_dict["spindle_amp_std"] = sp_summary["Amplitude"].std()
+
+                    row_dict["spindle_mean_duration"] = sp_summary["Duration"].mean()
+                    row_dict["spindle_duration_std"] = sp_summary["Duration"].std()
+
+                    row_dict["spindle_mean_freq"] = sp_summary["Frequency"].mean()
+                    row_dict["spindle_mean_relpower"] = sp_summary["RelPower"].mean()
+                    row_dict["spindle_mean_rms"] = sp_summary["RMS"].mean()
+
+                    row_dict["spindle_total_duration"] = sp_summary["Duration"].sum()
+
+                else:
+                    print("The sp was None")
+                    row_dict["spindle_count"] = 0
+                    row_dict["spindle_density"] = 0
+                    row_dict["spindle_mean_amp"] = 0
+                    row_dict["spindle_amp_std"] = 0
+                    row_dict["spindle_mean_duration"] = 0
+                    row_dict["spindle_duration_std"] = 0
+                    row_dict["spindle_mean_freq"] = 0
+                    row_dict["spindle_mean_relpower"] = 0
+                    row_dict["spindle_mean_rms"] = 0
+                    row_dict["spindle_total_duration"] = 0
+            except Exception as e:
+                print(f"Exception: {e}")
+                row_dict["spindle_count"] = 0
+                row_dict["spindle_density"] = 0
+                row_dict["spindle_mean_amp"] = 0
+                row_dict["spindle_amp_std"] = 0
+                row_dict["spindle_mean_duration"] = 0
+                row_dict["spindle_duration_std"] = 0
+                row_dict["spindle_mean_freq"] = 0
+                row_dict["spindle_mean_relpower"] = 0
+                row_dict["spindle_mean_rms"] = 0
+                row_dict["spindle_total_duration"] = 0
+
         # -----------------------------
         # ECG-specific Features
         # -----------------------------
@@ -267,11 +395,77 @@ def assess_signal_quality(raw_psg, category_lookup):
                 else:
                     sdnn = np.nan
 
-                row_dict["hrv_sdnn"] = sdnn
+                #row_dict["hrv_sdnn"] = sdnn
+                pre = Pre.Preprocessing(data, fs)
 
-            except:
+                # Notch filter the powerline:
+                filtered_signal = pre.notch(n_freq=60)  # 50 Hz for european powerline, 60 Hz for USA
+
+                # Bandpass for baseline wander and high-frequency noise:
+                filtered_signal = Pre.Preprocessing(filtered_signal, fs).bpfilt()
+
+                fp = Fp.FiducialPoints(filtered_signal, fs)
+                # Two different peak detector algorithms:
+                with HiddenPrints():  # to avoid long verbose of the peak detector functions
+                    jqrs_peaks = fp.jqrs()
+                    #xqrs_peaks = fp.xqrs()
+
+                hrv_biomarker = get_hrv_biomarkers(jqrs_peaks, fs)
+                row_dict["AVNN"]=hrv_biomarker["AVNN"]
+                row_dict["SDNN"]=hrv_biomarker["SDNN"]
+                row_dict["RMSSD"]=hrv_biomarker["RMSSD"]
+                row_dict["PNN50"]=hrv_biomarker["PNN50"]
+                row_dict["SEM"]= hrv_biomarker["SEM"]
+                row_dict["PIP"]= hrv_biomarker["PIP"]
+                row_dict["IALS"]= hrv_biomarker["IALS"]
+                row_dict["PSS"]= hrv_biomarker["PSS"]
+                row_dict["PAS"]= hrv_biomarker["PAS"]
+
+                row_dict["SD1"]= hrv_biomarker["SD1"]
+                row_dict["SD2"]= hrv_biomarker["SD2"]
+                row_dict["alpha_1"]= hrv_biomarker["alpha_1"]
+                row_dict["alpha_2"]= hrv_biomarker["alpha_2"]
+                row_dict["MSE"]= hrv_biomarker["MSE"]
+
+                row_dict["TOTAL_POWER"]= hrv_biomarker["total_power"]
+                row_dict["VLF_POWER"]= hrv_biomarker["vlf_power"]
+                row_dict["LF_POWER"]= hrv_biomarker["lf_power"]
+                row_dict["HF_POWER"]= hrv_biomarker["hf_power"]
+                row_dict["VLF_NORM"]= hrv_biomarker["vlf_norm"]
+                row_dict["LF_NORM"]= hrv_biomarker["lf_norm"]
+                row_dict["HF_NORM"]= hrv_biomarker["hf_norm"]
+                row_dict["LF_HF_RATIO"]= hrv_biomarker["lf_hf_ratio"]
+
+
+            except Exception as e:
+                print(f"Exception occured while reading file: {e}")
                 row_dict["mean_hr"] = np.nan
-                row_dict["hrv_sdnn"] = np.nan
+                row_dict["AVNN"] = np.nan
+                row_dict["SDNN"] = np.nan
+                row_dict["RMSSD"] = np.nan
+                row_dict["PNN50"] = np.nan
+                row_dict["SEM"] = np.nan
+                row_dict["PIP"] = np.nan
+                row_dict["IALS"] = np.nan
+                row_dict["PSS"] = np.nan
+                row_dict["PAS"] = np.nan
+
+                row_dict["SD1"] = np.nan
+                row_dict["SD2"] = np.nan
+                row_dict["alpha_1"] = np.nan
+                row_dict["alpha_2"] = np.nan
+                row_dict["MSE"] = np.nan
+
+                row_dict["TOTAL_POWER"] = np.nan
+                row_dict["VLF_POWER"] = np.nan
+                row_dict["LF_POWER"] = np.nan
+                row_dict["HF_POWER"] = np.nan
+                row_dict["VLF_NORM"] = np.nan
+                row_dict["LF_NORM"] = np.nan
+                row_dict["HF_NORM"] = np.nan
+                row_dict["LF_HF_RATIO"] = np.nan
+
+
 
         # -----------------------------
         # EMG-specific Features
@@ -298,11 +492,38 @@ def assess_signal_quality(raw_psg, category_lookup):
 
                 row_dict["mean_resp_rate"] = mean_rr
                 row_dict["resp_variability"] = resp_var
+                '''#currently problematic due to using an old scipy version
+                if ch_name=="spo2":
+                    spo2_df = get_spo2_biomarkers(data, fs, patient_name="unknown")
+
+                    if len(spo2_df) > 0:
+
+                        spo2_row = spo2_df.iloc[0]
+
+                        for col in spo2_row.index:
+                            if col not in ["patient", "time begin", "time end"]:
+                                row_dict[col] = spo2_row[col]
+                else:
+                    for col in [
+                        "AV", "MED", "Min", "SD", "RG", "P", "M", "ZC", "DI",
+                        "ODI", "CA", "CT", "POD", "AODmax", "AOD100",
+                        "ApEn", "LZ", "CTM", "SampEn", "DFA"
+                    ]:
+                        row_dict[col] = 0
+                '''
 
             except:
+                print(f"SPO2 extraction error: {e}")
                 row_dict["mean_resp_rate"] = np.nan
                 row_dict["resp_variability"] = np.nan
-
+                '''
+                for col in [
+                    "AV", "MED", "Min", "SD", "RG", "P", "M", "ZC", "DI",
+                    "ODI", "CA", "CT", "POD", "AODmax", "AOD100",
+                    "ApEn", "LZ", "CTM", "SampEn", "DFA"
+                ]:
+                    row_dict[col] = 0
+                '''
         quality_metrics.append(row_dict)
 
     return pd.DataFrame(quality_metrics)
@@ -405,7 +626,7 @@ all_arousal_accuracies = []
 #all_quality_dfs=[]
 
 df_demo = pd.read_csv(DEMO_PATH)
-
+'''
 for index, row in df_demo.iterrows(): #using the helper functions
     found_paths = get_challenge_paths(row)
 
@@ -506,7 +727,7 @@ for index, row in df_demo.iterrows(): #using the helper functions
             )
 
             print(" - Confusion Matrix stage:")
-            print(conf_mat)
+            #print(conf_mat)
 
             human_transitions = np.where(np.diff(human_stage) != 0)[0]
             human_indices = np.concatenate(
@@ -528,9 +749,9 @@ for index, row in df_demo.iterrows(): #using the helper functions
                 pd.Series(algo_targets, name="to Stage"), normalize="index")
             print("Transition matrices")
             print("Human")
-            print(human_matrix)
+            #print(human_matrix)
             print("Algorithmic")
-            print(algo_matrix)
+            #print(algo_matrix)
 
 
         else:
@@ -576,7 +797,7 @@ for index, row in df_demo.iterrows(): #using the helper functions
             )
 
             print(" - Confusion Matrix respiration:")
-            print(conf_mat)
+            #print(conf_mat)
 
         # -----------------------------
         # 7. Limb analysis
@@ -623,7 +844,7 @@ for index, row in df_demo.iterrows(): #using the helper functions
             )
 
             print(" - Confusion Matrix limb movement:")
-            print(conf_mat)
+            #print(conf_mat)
 
         # ----------------------------
         # 8. Arousal Analysis
@@ -668,7 +889,7 @@ for index, row in df_demo.iterrows(): #using the helper functions
             )
 
             print(" - Confusion Matrix arousal:")
-            print(conf_mat)
+            #print(conf_mat)
 
         print("Assessing signal quality...")
 
@@ -676,20 +897,20 @@ for index, row in df_demo.iterrows(): #using the helper functions
 
         quality_df["subject"] = subject_id
         quality_df["session"] = row[HEADERS["session_id"]]
-
+        quality_df = quality_df.reindex(columns=ALL_FEATURE_COLUMNS)
         quality_df.to_csv(
             CHANNEL_OUTPUT,
             mode="a",
             header=not header_written,
             index=False
         )
+        header_written=True
 
-        header_written = True
         processed_subjects.add(subject_id)
 
         print(f"Saved quality metrics for {subject_id}")
 
-        '''
+        
         all_eeg = []
         all_emg = []
         all_ecg = []
@@ -771,7 +992,7 @@ for index, row in df_demo.iterrows(): #using the helper functions
 
                 print(f"Mean Resp Rate: {60 / np.mean(intervals) if len(intervals) > 0 else 0}")
                 print(f"Resp Variability: {resp_var}")
-                '''
+                
         raw_psg.close()
         raw_human.close()
         raw_algo.close()
@@ -800,7 +1021,7 @@ if all_arousal_accuracies:
     print(f"Mean: {np.mean(all_arousal_accuracies):.3f}")
     print(f"Std:  {np.std(all_arousal_accuracies):.3f}")
 
-'''
+
 final_quality_df = pd.concat(all_quality_dfs, ignore_index=True)
 
 channel_summary = (
@@ -836,8 +1057,7 @@ outliers = merged[
 ]
 
 print(outliers)
-'''
-'''
+
 print("\n=== Detected Signal Quality Outliers ===\n")
 print(outliers[["subject", "channel"] +
                [f"{m}_z" for m in metrics]])

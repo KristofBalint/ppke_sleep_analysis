@@ -17,6 +17,9 @@ import sys
 from tqdm import tqdm
 
 from helper_code import *
+import pandas as pd
+from file_reader import assess_signal_quality, ALL_FEATURE_COLUMNS, category_lookup
+import mne
 
 ################################################################################
 # Path & Constant Configuration (Added for Robustness)
@@ -270,7 +273,38 @@ def extract_physiological_features(physiological_data, physiological_fs, csv_pat
         processed_channels[new_label] = data
         # Mapping the sampling rate to the new label
         processed_fs[new_label] = physiological_fs.get(old_label, 200.0) # Default to 200 if missing
-    
+
+
+    class FakeRaw:
+        def __init__(self, data_dict, fs_dict):
+            self._data = data_dict
+            self._fs = fs_dict
+            self.ch_names = list(data_dict.keys())
+            self.info = {"sfreq": list(fs_dict.values())[0] if fs_dict else 200}
+
+        def __getitem__(self, key):
+            sig = self._data[key]
+            return sig.reshape(1, -1), None
+
+
+    raw_psg = FakeRaw(processed_channels, physiological_fs)
+
+    quality_df = assess_signal_quality(raw_psg, category_lookup)
+
+    quality_df = quality_df.reindex(columns=ALL_FEATURE_COLUMNS)
+
+    quality_df = quality_df.fillna(0)
+
+    feature_df = quality_df.drop(
+        columns=["channel", "category"],
+        errors="ignore"
+    )
+
+    feature_vector = feature_df.to_numpy().flatten()
+
+    return feature_vector.astype(np.float32)
+    '''
+
     if 'physiological_data' in locals(): del physiological_data
 
     # Step 3: Construct Bipolar Derivations
@@ -395,6 +429,7 @@ def extract_physiological_features(physiological_data, physiological_fs, csv_pat
     if 'processed_channels' in locals(): del processed_channels
 
     return np.array(final_features)
+    '''
 
 def extract_algorithmic_annotations_features(algo_data):
     """
