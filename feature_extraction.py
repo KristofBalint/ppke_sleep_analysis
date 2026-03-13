@@ -80,6 +80,7 @@ ALL_FEATURE_COLUMNS = ["subject", "session", "channel", "category",
 
                        ]
 
+
 UNIQUE_CHANNELS = ['f3-m2', 'f4-m1', 'c3-m2', 'c4-m1', 'o1-m2',
                    'o2-m1', 'e1', 'e2', 'chin1-chin2', 'ptaf',
                    'airflow', 'chest', 'abd', 'lat', 'rat',

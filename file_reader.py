@@ -30,6 +30,7 @@ BASE_DIR = "training_set"
 DEMO_PATH = os.path.join(BASE_DIR, DEMOGRAPHICS_FILE)  # Uses helper constant
 CHANNEL_OUTPUT = "channel_quality_long.csv"
 
+
 if not os.path.exists(CHANNEL_OUTPUT):
     header_written = False
     processed_subjects = set(
