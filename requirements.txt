@@ -4,7 +4,7 @@ matplotlib==3.10.5
 mne==1.11.0
 neurokit2==0.2.13
 numpy==2.0.2
-pandas==3.0.1
+pandas==2.3.3
 pecg==2.0.5
 pobm==1.2.0
 scipy==1.13.1
