@@ -1,12 +1,22 @@
 import numpy as np
 import pandas as pd
 import scipy
-if not hasattr(scipy.stats, 'median_absolute_deviation'):
+if not hasattr(scipy.stats, 'median_absolute_deviation'):   #silly little renames because pobm is an old package with outdated functions
     scipy.stats.median_absolute_deviation = scipy.stats.median_abs_deviation
 if not hasattr(scipy.signal, 'hamming'):
     scipy.signal.hamming = scipy.signal.windows.hamming
 if not hasattr(np, 'RankWarning'):
     np.RankWarning = np.exceptions.RankWarning
+if not hasattr(np, 'trapz'):
+    np.trapz = np.trapezoid
+if not hasattr(np,'infty'):
+    np.infty = np.inf
+if not hasattr(np,'NaN'):
+    np.NaN = np.nan
+if not hasattr(np,'alltrue'):
+    np.alltrue = np.all
+if not hasattr(np,'sometrue'):
+    np.sometrue=np.any
 from pobm.obm.desat import DesaturationsMeasures, desat_embedding
 from pobm.obm.complex import ComplexityMeasures
 from pobm.obm.burden import HypoxicBurdenMeasures
@@ -17,7 +27,10 @@ from pobm.prep import set_range, median_spo2
 #IMPORTANT! pobm can use an older version of scipy, which can cause dependency problems. It requires scipy 1.4 or newer,
 #while median_absolute_deviation was renamed median_abs_dev around 1.5
 #--------------------
-
+#   This is from Szabolcs, I copy-pasted from his toolbox. His original code can be seen in https://github.com/pszabolcsm/pyPSG
+#   The dataset has no ppg data, so instead of importing his toolbox, I crtl+c crtl+v'd his code, because pyPPG also
+#   has these dependency issues of using older versions of common packages.
+#--------------------
 
 def features_all_desat(signal, time_signal, ODI_Threshold=6, hard_threshold=88, relative=True, desat_max_length=14400):
     '''
@@ -179,7 +192,7 @@ def extract_biomarkers_per_signal(signal, patient, time_begin, time_end):
         "AODmax": [results_hypoxic.AODmax],
         "AOD100": [results_hypoxic.AOD100],
 
-        '''
+        ''' #Greatly slows down process time due to faulty implementation
         "ApEn": [results_complexity.ApEn],
         "LZ": [results_complexity.LZ],
         "CTM": [results_complexity.CTM],

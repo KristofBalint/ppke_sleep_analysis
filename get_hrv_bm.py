@@ -1,6 +1,11 @@
 import numpy as np
 import hrv_bms as hrv
 
+#--------------------
+#   This is from Szabolcs, I copy-pasted from his toolbox. His original code can be seen in https://github.com/pszabolcsm/pyPSG
+#   The dataset has no ppg data, so instead of importing his toolbox, I crtl+c crtl+v'd his code, because pyPPG also
+#   has these dependency issues of using older versions of common packages.
+#--------------------
 
 def get_hrv_biomarkers(peaks, fs):
     """

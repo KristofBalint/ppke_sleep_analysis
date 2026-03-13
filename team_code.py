@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 from helper_code import *
 import pandas as pd
-from file_reader import assess_signal_quality, ALL_FEATURE_COLUMNS, category_lookup, MASTER_FEATURE_NAMES, UNIQUE_CHANNELS
+from feature_extraction import assess_signal_quality, ALL_FEATURE_COLUMNS, MASTER_FEATURE_NAMES, UNIQUE_CHANNELS, get_category_map
 import mne
 from xgboost import XGBClassifier
 
@@ -63,6 +63,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     features = list()
     labels = list()
 
+    category_lookup = get_category_map('channel_table.csv')
+
     pbar = tqdm(range(num_records), desc="Extracting Features", unit="record",
                 disable=not verbose)
     for i in pbar:
@@ -99,7 +101,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 physiological_data_file)
             physiological_features = extract_physiological_features(
                 physiological_data, physiological_fs,
-                csv_path=csv_path)  # This function can rename, re-reference, resample, etc. the signal data.
+                csv_path=csv_path,category_lookup=category_lookup)  # This function can rename, re-reference, resample, etc. the signal data.
 
             # Load the algorithmic annotations.
             algorithmic_annotations_file = os.path.join(data_folder,
@@ -293,7 +295,7 @@ def extract_demographic_features(data):
 
 
 def extract_physiological_features(physiological_data, physiological_fs,
-                                   csv_path=DEFAULT_CSV_PATH):
+                                   csv_path=DEFAULT_CSV_PATH, category_lookup=get_category_map('channel_table.csv')):
     """
     Standardizes channels and extracts statistical/spectral features.
     """
