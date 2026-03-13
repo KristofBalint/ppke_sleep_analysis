@@ -192,9 +192,7 @@ def process_patient_signals(edf_path):  # uses helper functions
             "channel": standard_name,
             "mean": np.mean(signal),
             "hf_ratio": high_frequency_ratio(signal, fs),
-            # Your existing function
             "dominant_freq": dominant_frequency(signal, fs)
-            # Your existing function
         }
         standardized_features.append(feat)
 
@@ -282,7 +280,6 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
     if len(data) < 10:
         return None
 
-    # everything from your loop goes here
     data, _ = raw_psg[ch_name]
     data = data.ravel()
     fs = raw_psg.info["sfreq"]
@@ -775,8 +772,6 @@ for index, row in df_demo.iterrows(): #using the helper functions
                                         verbose=False)
         raw_algo = mne.io.read_raw_edf(found_paths["algo"], preload=True, verbose=False)
         # Note: You can also standardize annotation channel names here if needed
-
-        # ... [Your existing sleep stage/resp analysis code] ...
 
         # ---------------------------------------------------
         # 5. Sleep Stage Analysis (Example)

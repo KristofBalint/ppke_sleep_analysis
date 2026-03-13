@@ -206,7 +206,6 @@ def run_model(model, record, data_folder, verbose):
     phys_file = os.path.join(data_folder, PHYSIOLOGICAL_DATA_SUBFOLDER, site_id,
                              f"{patient_id}_ses-{session_id}.edf")
     if os.path.exists(phys_file):
-        print("Doesn't exist! You fucked up!")
         phys_data, phys_fs = load_signal_data(phys_file)
         # Ensure csv_path is accessible or defined
         physiological_features = extract_physiological_features(phys_data,
@@ -214,6 +213,7 @@ def run_model(model, record, data_folder, verbose):
     else:
         # Fallback to zeros if file is missing (length 49 in original code)
         # physiological_features = np.zeros(49)
+        print("Doesn't exist!")
         physiological_features = np.zeros(
             len(UNIQUE_CHANNELS) * (len(ALL_FEATURE_COLUMNS) - 4))
 
