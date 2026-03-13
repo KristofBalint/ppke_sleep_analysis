@@ -5,7 +5,13 @@ RUN mkdir /challenge
 COPY ./ /challenge
 WORKDIR /challenge
 
-## Install your dependencies here using apt install, etc.
+## Install system-level build tools to prevent 'greenlet/gevent' errors
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    python3-dev \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-## Include the following line if you have a requirements.txt file.
+## Upgrade pip and install requirements
+RUN pip install --upgrade pip setuptools wheel
 RUN pip install -r requirements.txt

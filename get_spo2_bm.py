@@ -3,6 +3,10 @@ import pandas as pd
 import scipy
 if not hasattr(scipy.stats, 'median_absolute_deviation'):
     scipy.stats.median_absolute_deviation = scipy.stats.median_abs_deviation
+if not hasattr(scipy.signal, 'hamming'):
+    scipy.signal.hamming = scipy.signal.windows.hamming
+if not hasattr(np, 'RankWarning'):
+    np.RankWarning = np.exceptions.RankWarning
 from pobm.obm.desat import DesaturationsMeasures, desat_embedding
 from pobm.obm.complex import ComplexityMeasures
 from pobm.obm.burden import HypoxicBurdenMeasures
@@ -113,11 +117,11 @@ def extract_biomarkers_per_signal(signal, patient, time_begin, time_end):
         :param time_end:
         :return: dictionary of SpO2 biomarkers
         '''
-
+    '''
     # Compute complexity features
     complexity_class = ComplexityMeasures()
     results_complexity = complexity_class.compute(signal)
-
+    '''
     # Compute desaturation biomarkers
     desat_class = DesaturationsMeasures()
     results_desat = desat_class.compute(signal)
@@ -175,12 +179,14 @@ def extract_biomarkers_per_signal(signal, patient, time_begin, time_end):
         "AODmax": [results_hypoxic.AODmax],
         "AOD100": [results_hypoxic.AOD100],
 
+        '''
         "ApEn": [results_complexity.ApEn],
         "LZ": [results_complexity.LZ],
         "CTM": [results_complexity.CTM],
         "SampEn": [results_complexity.SampEn],
         "DFA": [results_complexity.DFA],
-
+        '''
+        
         "PRSAc": [results_PRSA.PRSAc],
         "PRSAad": [results_PRSA.PRSAad],
         "PRSAos": [results_PRSA.PRSAos],
