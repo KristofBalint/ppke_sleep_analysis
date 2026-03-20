@@ -1,7 +1,7 @@
 import os, sys
 import matplotlib.pyplot as plt
 import numpy as np
-
+import scipy
 
 class HiddenPrints:
     """
@@ -51,3 +51,24 @@ def plot_leads(signals, fs, leads=range(12), labels=[''], peaks=None, figsize=(8
 
     plt.legend(loc='upper right')
     plt.show()
+
+def unfuck_old():
+    if not hasattr(scipy.stats,
+                   'median_absolute_deviation'):  # silly little renames because pobm is an old package with outdated functions
+        scipy.stats.median_absolute_deviation = scipy.stats.median_abs_deviation
+    if not hasattr(scipy.signal, 'hamming'):
+        scipy.signal.hamming = scipy.signal.windows.hamming
+    if not hasattr(np, 'RankWarning'):
+        np.RankWarning = np.exceptions.RankWarning
+    if not hasattr(np, 'trapz'):
+        np.trapz = np.trapezoid
+    if not hasattr(np, 'infty'):
+        np.infty = np.inf
+    if not hasattr(np, 'NaN'):
+        np.NaN = np.nan
+    if not hasattr(np, 'alltrue'):
+        np.alltrue = np.all
+    if not hasattr(np, 'sometrue'):
+        np.sometrue = np.any
+    if not hasattr(np, 'in1d'):
+        np.in1d = np.isin

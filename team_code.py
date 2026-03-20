@@ -18,7 +18,8 @@ from tqdm import tqdm
 
 from helper_code import *
 import pandas as pd
-from feature_extraction import assess_signal_quality, ALL_FEATURE_COLUMNS, MASTER_FEATURE_NAMES, UNIQUE_CHANNELS, get_category_map
+from feature_extraction import assess_signal_quality, ALL_FEATURE_COLUMNS, \
+    MASTER_FEATURE_NAMES, UNIQUE_CHANNELS, get_category_map
 import mne
 from xgboost import XGBClassifier
 
@@ -31,7 +32,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Build the absolute path to the CSV file relative to the script location
 DEFAULT_CSV_PATH = os.path.join(SCRIPT_DIR, 'channel_table.csv')
-
 
 
 ################################################################################
@@ -64,7 +64,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     features = list()
     labels = list()
 
-    category_lookup = get_category_map('channel_table.csv')
+    category_lookup = get_category_map(DEFAULT_CSV_PATH)
 
     pbar = tqdm(range(num_records), desc="Extracting Features", unit="record",
                 disable=not verbose)
@@ -98,13 +98,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                     print(
                         f"  ! Missing physiological data for {patient_id}. Skipping...")
                 continue  # skip record
-            physiological_data, physiological_fs = load_signal_data(
-                physiological_data_file)
-            physiological_features = extract_physiological_features(
-                physiological_data, physiological_fs,
-                csv_path=csv_path,category_lookup=category_lookup)  # This function can rename, re-reference, resample, etc. the signal data.
 
-            # Load the algorithmic annotations.
+            # Load the algorithmic annotations. It needs to be loaded before extracting phyisiological features in our code, as hour code requires the hypnogram from the algorithmic annotations
             algorithmic_annotations_file = os.path.join(data_folder,
                                                         ALGORITHMIC_ANNOTATIONS_SUBFOLDER,
                                                         site_id,
@@ -113,6 +108,21 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 algorithmic_annotations_file)
             algorithmic_features = extract_algorithmic_annotations_features(
                 algorithmic_annotations)
+
+            # Load physiological data
+            physiological_data, physiological_fs = load_signal_data(
+                physiological_data_file)
+            hypno = None
+            if "stage_caisr" in algorithmic_annotations:
+                hypno = algorithmic_annotations["stage_caisr"]
+                #print(f"Hypnogram length before processing{len(hypno)}")
+                hypno = np.round(hypno.flatten()).astype(int)
+            else:
+                hypno = None
+            physiological_features = extract_physiological_features(
+                physiological_data, physiological_fs,
+                csv_path=csv_path, category_lookup=category_lookup,
+                hypnogram=hypno)  # This function can rename, re-reference, resample, etc. the signal data.
 
             # Load the human annotations; these data will not be available in the hidden validation and test sets.
             human_annotations_file = os.path.join(data_folder,
@@ -148,6 +158,9 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
     pbar.close()
 
+    lengths = [len(f) for f in features]
+    print(f"Unique feature lengths found: {set(lengths)}")
+
     features = np.asarray(features, dtype=np.float32)
     labels = np.asarray(labels, dtype=bool)
 
@@ -158,17 +171,26 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     # This very simple model trains a random forest model with very simple features.
 
     # Define the parameters for the random forest classifier and regressor.
-    n_estimators = 12  # Number of trees in the forest.
-    max_leaf_nodes = 34  # Maximum number of leaf nodes in each tree.
-    random_state = 56  # Random state; set for reproducibility.
+    # n_estimators = 12  # Number of trees in the forest.
+    # max_leaf_nodes = 34  # Maximum number of leaf nodes in each tree.
+    # random_state = 56  # Random state; set for reproducibility.
+
+    params = {'max_depth': 7, 'learning_rate': 0.011500481494966235,
+              'n_estimators': 353, 'subsample': 0.51954698162124,
+              'colsample_bytree': 0.699941687775994, 'gamma': 4.84909380072766,
+              'min_child_weight': 8, 'reg_alpha': 3.5045344473732563e-07,
+              'reg_lambda': 9.129867937103156e-07}
 
     # Fit the model.
     # model = RandomForestClassifier(
     #    n_estimators=n_estimators, max_leaf_nodes=max_leaf_nodes, random_state=random_state).fit(features, labels)
     model = XGBClassifier(
-        n_estimators=n_estimators, max_depth=5, learning_rate=0.1,
-        random_state=random_state,
-        use_label_encoder=False, eval_metric='logloss').fit(features, labels)
+        **params,
+        objective="binary:logistic",
+        eval_metric="auc",
+        tree_method="hist",
+        enable_categorical=True
+    ).fit(features, labels)
 
     # Create a folder for the model if it does not already exist.
     os.makedirs(model_folder, exist_ok=True)
@@ -205,6 +227,21 @@ def run_model(model, record, data_folder, verbose):
     patient_data = load_demographics(patient_data_file, patient_id, session_id)
     demographic_features = extract_demographic_features(patient_data)
 
+    # Load Algorithmic Annotations, this needs to be loaded first as the hypnogram is needed for the physiological features
+    algo_file = os.path.join(data_folder, ALGORITHMIC_ANNOTATIONS_SUBFOLDER,
+                             site_id,
+                             f"{patient_id}_ses-{session_id}_caisr_annotations.edf")
+    hypno = None
+    if os.path.exists(algo_file):
+        algo_data, _ = load_signal_data(algo_file)
+        if "stage_caisr" in algo_data:
+            hypno = np.round(algo_data["stage_caisr"].flatten()).astype(int)
+        algorithmic_features = extract_algorithmic_annotations_features(
+            algo_data)
+    else:
+        # Fallback to zeros (length 12)
+        algorithmic_features = np.zeros(12)
+
     # Load signal data.
     phys_file = os.path.join(data_folder, PHYSIOLOGICAL_DATA_SUBFOLDER, site_id,
                              f"{patient_id}_ses-{session_id}.edf")
@@ -212,25 +249,13 @@ def run_model(model, record, data_folder, verbose):
         phys_data, phys_fs = load_signal_data(phys_file)
         # Ensure csv_path is accessible or defined
         physiological_features = extract_physiological_features(phys_data,
-                                                                phys_fs)
+                                                                phys_fs,
+                                                                hypnogram=hypno)
     else:
         # Fallback to zeros if file is missing (length 49 in original code)
         # physiological_features = np.zeros(49)
-        print("Doesn't exist!")
         physiological_features = np.zeros(
-            len(UNIQUE_CHANNELS) * (len(ALL_FEATURE_COLUMNS) - 4))
-
-    # Load Algorithmic Annotations
-    algo_file = os.path.join(data_folder, ALGORITHMIC_ANNOTATIONS_SUBFOLDER,
-                             site_id,
-                             f"{patient_id}_ses-{session_id}_caisr_annotations.edf")
-    if os.path.exists(algo_file):
-        algo_data, _ = load_signal_data(algo_file)
-        algorithmic_features = extract_algorithmic_annotations_features(
-            algo_data)
-    else:
-        # Fallback to zeros (length 12)
-        algorithmic_features = np.zeros(12)
+            len(MASTER_FEATURE_NAMES))
 
     features = np.hstack([demographic_features, physiological_features,
                           algorithmic_features]).reshape(1, -1)
@@ -296,7 +321,9 @@ def extract_demographic_features(data):
 
 
 def extract_physiological_features(physiological_data, physiological_fs,
-                                   csv_path=DEFAULT_CSV_PATH, category_lookup=get_category_map('channel_table.csv')):
+                                   csv_path=DEFAULT_CSV_PATH,
+                                   category_lookup=get_category_map(
+                                       DEFAULT_CSV_PATH), hypnogram=None):
     """
     Standardizes channels and extracts statistical/spectral features.
     """
@@ -332,19 +359,35 @@ def extract_physiological_features(physiological_data, physiological_fs,
             return sig.reshape(1, -1), None
 
     raw_psg = FakeRaw(processed_channels, physiological_fs)
-
-    quality_df = assess_signal_quality(raw_psg, category_lookup)
-
+    quality_df = assess_signal_quality(raw_psg, category_lookup,
+                                       hypnogram=hypnogram)
+    print(quality_df)
     quality_df = quality_df.reindex(columns=ALL_FEATURE_COLUMNS)
-
+    if 'subject' not in quality_df.columns:
+        print("No subject name")
+    if 'session' not in quality_df.columns:
+        print("No session name")
+    print(quality_df)
     feature_df = quality_df.pivot(index=['subject', 'session'],
-                                  columns='channel')
-
-    feature_df.columns = [f"{ch}_{feat}" for feat, ch in feature_df.columns]
+                                  columns=['channel', 'stage'])
+    print(feature_df)
+    feature_df.columns = [f"{ch}_{st}_{feat}" for feat, ch, st in
+                          feature_df.columns]
 
     feature_df = feature_df.reindex(columns=MASTER_FEATURE_NAMES, fill_value=0)
 
-    return feature_df.to_numpy().flatten().astype(np.float32)
+    final_vector = feature_df.to_numpy().flatten().astype(np.float32)
+
+    # Safety Check:
+    expected_len = len(MASTER_FEATURE_NAMES)
+    if len(final_vector) != expected_len:
+        # This should be impossible now, but good for debugging
+        print("BITCH")
+        print(len(final_vector))
+        print(expected_len)
+        return np.zeros(expected_len, dtype=np.float32)
+
+    return final_vector
 
     # quality_df = quality_df.fillna(0)
 
@@ -356,133 +399,6 @@ def extract_physiological_features(physiological_data, physiological_fs,
     # feature_vector = feature_df.to_numpy().flatten()
 
     # return feature_vector.astype(np.float32)
-    '''
-
-    if 'physiological_data' in locals(): del physiological_data
-
-    # Step 3: Construct Bipolar Derivations
-    bipolar_configs = [
-        ('f3-m2', 'f3', ['m2']), ('f4-m1', 'f4', ['m1']),
-        ('c3-m2', 'c3', ['m2']), ('c4-m1', 'c4', ['m1']),
-        ('o1-m2', 'o1', ['m2']), ('o2-m1', 'o2', ['m1']),
-        ('e1-m2', 'e1', ['m2']), ('e2-m1', 'e2', ['m1']),
-        ('chin1-chin2', 'chin1', ['chin2']),
-        ('lat', 'lleg+', ['lleg-']), ('rat', 'rleg+', ['rleg-'])
-    ]
-
-    for target, pos, neg_list in bipolar_configs:
-        # 1. Skip if target already exists or pos channel missing
-        if target in processed_channels or pos not in processed_channels:
-            continue
-
-        # 2. Check all neg channels exist
-        if not all(n in processed_channels for n in neg_list):
-            continue
-
-        # 3. Check sampling rate consistency
-        all_involved = [pos] + neg_list
-        fs_values = [processed_fs[ch] for ch in all_involved]
-
-        if len(set(fs_values)) > 1:
-            raise ValueError(f"Sampling rate mismatch for {target}: {dict(zip(all_involved, fs_values))}")
-
-        # 4. Derive bipolar signal
-        ref_sig = processed_channels[neg_list[0]] if len(neg_list) == 1 else tuple(processed_channels[n] for n in neg_list)
-
-        derived = derive_bipolar_signal(processed_channels[pos], ref_sig)
-
-        if derived is not None:
-            processed_channels[target] = derived
-            processed_fs[target] = processed_fs[pos]
-
-    leads_to_check = {
-        'eeg':  ['f3-m2', 'f4-m1', 'c3-m2', 'c4-m1'],
-        'eog':  ['e1-m2', 'e2-m1'],
-        'chin': ['chin1-chin2', 'chin'],
-        'leg':  ['lat', 'rat'],
-        'ecg':  ['ecg', 'ekg'],
-        'resp': ['airflow', 'ptaf', 'abd', 'chest'],
-        'spo2': ['spo2', 'sao2'] # Added sao2 as fallback for spo2
-    }
-
-    final_features = []
-    for lead_type, candidates in leads_to_check.items():
-        sig = None
-        fs = None
-
-        # Identify the first available candidate
-        for candidate in candidates:
-            if candidate in processed_channels and processed_channels[candidate] is not None:
-                sig = processed_channels[candidate]
-                fs = processed_fs.get(candidate)
-                break 
-
-        # if sig is not None and len(sig) > 0 and fs is not None:
-        #     # --- 1. Time Domain Features ---
-        #     std_val = np.std(sig)
-        #     mav_val = np.mean(np.abs(sig))
-        #     energy_val = np.sum(sig**2) / len(sig)
-
-        #     # --- 2. Frequency Domain Features (Spectral) ---
-        #     n = len(sig)
-        #     # Correct spacing for frequency axis based on channel-specific fs
-        #     freqs = np.fft.rfftfreq(n, d=1/fs)
-
-        #     # Compute Power Spectral Density (PSD)
-        #     # Multiplied by 2 for rfft (except DC/Nyquist) and divided by fs for density
-        #     fft_res = np.abs(np.fft.rfft(sig))
-        #     psd = (fft_res**2) / (n * fs)
-
-        #     # Define band masks
-        #     delta_mask = (freqs >= 0.5) & (freqs <= 4)
-        #     theta_mask = (freqs > 4) & (freqs <= 8)
-        #     alpha_mask = (freqs > 8) & (freqs <= 12)
-
-        #     # Calculate power in bands using trapezoidal integration for physical accuracy
-        #     delta_p = np.trapezoid(psd[delta_mask], freqs[delta_mask]) if np.any(delta_mask) else 0.0
-        #     theta_p = np.trapezoid(psd[theta_mask], freqs[theta_mask]) if np.any(theta_mask) else 0.0
-        #     alpha_p = np.trapezoid(psd[alpha_mask], freqs[alpha_mask]) if np.any(alpha_mask) else 0.0
-
-        #     # Ratio biomarker: Delta/Theta (Indicator of cognitive slowing)
-        #     dt_ratio = delta_p / theta_p if theta_p > 0 else 0.0
-
-        #     final_features.extend([std_val, mav_val, energy_val, delta_p, theta_p, alpha_p, dt_ratio])
-
-        if sig is not None and len(sig) > 1:
-            # --- Time Domain Features (Very Fast) ---
-            std_val = np.std(sig)
-            mav_val = np.mean(np.abs(sig))
-
-            # Zero Crossing Rate (Proxy for frequency/slowing)
-            zcr = np.mean(np.diff(np.sign(sig)) != 0)
-
-            # Root Mean Square
-            rms = np.sqrt(np.mean(sig**2))
-
-            # Signal Activity (Variance)
-            activity = np.var(sig)
-
-            # Mobility (Hjorth Parameter) - Proxy for mean frequency
-            # sqrt(var(diff(sig)) / var(sig))
-            diff_sig = np.diff(sig)
-            mobility = np.sqrt(np.var(diff_sig) / activity) if activity > 0 else 0.0
-
-            # Complexity (Hjorth Parameter) - Proxy for bandwidth
-            diff2_sig = np.diff(diff_sig)
-            var_d2 = np.var(diff2_sig)
-            var_d1 = np.var(diff_sig)
-            complexity = (np.sqrt(var_d2 / var_d1) / mobility) if (var_d1 > 0 and mobility > 0) else 0.0
-
-            final_features.extend([std_val, mav_val, zcr, rms, activity, mobility, complexity])
-
-        else:
-            # Padding: 7 features per lead type
-            final_features.extend([0.0] * 7)
-
-    if 'processed_channels' in locals(): del processed_channels
-
-    return np.array(final_features)
-    '''
 
 
 def extract_algorithmic_annotations_features(algo_data):

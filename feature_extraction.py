@@ -11,12 +11,14 @@ import yasa
 from utils import HiddenPrints
 from pecg import Preprocessing as Pre
 from pecg.ecg import FiducialPoints as Fp
-import wfdb#wfdb is needed for pecg
+import wfdb  # wfdb is needed for pecg
 from pecg.ecg import Biomarkers as Bm
 from get_hrv_bm import get_hrv_biomarkers
 from joblib import Parallel, delayed
-from get_spo2_bm import get_spo2_biomarkers  # currently problematic due to using an old scipy version
+from get_spo2_bm import get_spo2_biomarkers  # currently problematic due to using an old scipy version #even after throwing out the complexity metics, it was still slow as dicks
+from utils import unfuck_old
 
+unfuck_old()
 
 def get_category_map(csv_path):
     df = pd.read_csv(csv_path)
@@ -31,7 +33,7 @@ def get_category_map(csv_path):
 
 
 # Create the map once
-#category_lookup = get_category_map('channel_table.csv')
+# category_lookup = get_category_map('channel_table.csv')
 
 
 DATA_TYPES = {
@@ -40,7 +42,15 @@ DATA_TYPES = {
     "algo": "_caisr_annotations"
 }
 
-ALL_FEATURE_COLUMNS = ["subject", "session", "channel", "category",
+STAGE_MAP = {
+    1: "N3",
+    2: "N2",
+    3: "N1",
+    4: "REM",
+    5: "Wake"
+}
+
+ALL_FEATURE_COLUMNS = ["subject", "session", "channel", "stage", "category",
                        # generic
                        "mean", "std", "variance", "skewness", "kurtosis",
                        "flatline_pct", "clipping_pct", "hf_power_ratio",
@@ -57,7 +67,7 @@ ALL_FEATURE_COLUMNS = ["subject", "session", "channel", "category",
                        "spindle_total_duration",
                        # ECG
                        "flatline_duration", "is_flat", "amp_out_of_bounds",
-                       "hf_ratio_signal", "max_slope", "mean_hr", "hrv_sdnn",
+                       "hf_ratio_signal", "max_slope", "mean_hr",
                        # HRV metrics (still in ECG)
                        "AVNN", "SDNN", "RMSSD", "PNN50", "SEM", "PIP", "IALS",
                        "PSS", "PAS", "SD1", "SD2", "alpha_1", "alpha_2", "MSE",
@@ -69,17 +79,16 @@ ALL_FEATURE_COLUMNS = ["subject", "session", "channel", "category",
                        "mean_resp_rate", "resp_variability"
                        # SpO2 biomarkers (still in Resp) #compatibility issues with old version
 
-                                         "AV", "MED", "Min", "SD", "RG", "P",
-                       "M", "ZC", "DI", "ODI", "DL_u", "DL_sd", "DA100_u",
-                       "DA100_sd", "DAmax_u", "DAmax_sd", "DD100_u", "DD100_sd",
-                       "DDmax_u", "DDmax_sd", "DS_u", "DS_sd", "TD_u", "TD_sd",
-                       "CA", "CT", "POD", "AODmax", "AOD100",
+                       #                  "AV", "MED", "Min", "SD", "RG", "P",
+                       # "M", "ZC", "DI", "ODI", "DL_u", "DL_sd", "DA100_u",
+                       # "DA100_sd", "DAmax_u", "DAmax_sd", "DD100_u", "DD100_sd",
+                       # "DDmax_u", "DDmax_sd", "DS_u", "DS_sd", "TD_u", "TD_sd",
+                       # "CA", "CT", "POD", "AODmax", "AOD100",
                        # "ApEn", "LZ", "CTM", "SampEn","DFA",
-                       "PRSAc", "PRSAad", "PRSAos", "PRSAsb", "PRSAsa", "AC",
-                       "PSD_total", "PSD_band", "PSD_ratio", "PSD_peak"
+                       # "PRSAc", "PRSAad", "PRSAos", "PRSAsb", "PRSAsa", "AC",
+                       # "PSD_total", "PSD_band", "PSD_ratio", "PSD_peak"
 
                        ]
-
 
 UNIQUE_CHANNELS = ['f3-m2', 'f4-m1', 'c3-m2', 'c4-m1', 'o1-m2',
                    'o2-m1', 'e1', 'e2', 'chin1-chin2', 'ptaf',
@@ -91,8 +100,15 @@ UNIQUE_CHANNELS = ['f3-m2', 'f4-m1', 'c3-m2', 'c4-m1', 'o1-m2',
 
 FEATURES_TO_USE = [c for c in ALL_FEATURE_COLUMNS if
                    c not in ['subject', 'session', 'channel', 'category']]
-MASTER_FEATURE_NAMES = [f"{ch}_{feat}" for ch in UNIQUE_CHANNELS for feat in
-                        FEATURES_TO_USE]
+
+VALID_STAGE_NAMES = list(STAGE_MAP.values()) + ["All"]
+MASTER_FEATURE_NAMES = [
+    f"{ch}_{stage}_{feat}"
+    for ch in UNIQUE_CHANNELS
+    for stage in VALID_STAGE_NAMES
+    for feat in FEATURES_TO_USE
+]
+
 
 # 3.1 helper functions-------------------------------------
 def inspect_raw(raw, label):
@@ -118,24 +134,8 @@ def concordance_cc(x, y):
     return (2 * cov_xy) / (var_x + var_y + (mean_x - mean_y) ** 2)
 
 
-def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
-    data, _ = raw_psg[ch_name]
-    data = data.ravel()
-    fs = raw_psg.info["sfreq"]
-
-    data = data[~np.isnan(data)]
-
-    if len(data) < 10:
-        return None
-
-    data, _ = raw_psg[ch_name]
-    data = data.ravel()
-    fs = raw_psg.info["sfreq"]
-
-    data = data[~np.isnan(data)]
-
-    category = category_lookup.get(ch_name, "unknown")
-
+def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
+                     processed=True):
     # -----------------------------
     # Generic Features (all channels)
     # -----------------------------
@@ -161,6 +161,7 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
     lf_ratio = lf_power / total_power if total_power > 0 else 0
 
     # Initialize row
+    # print("Calculating generic features")
     row_dict = {
         "channel": ch_name,
         "category": category,
@@ -174,12 +175,13 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
         "hf_power_ratio": hf_ratio,
         "lf_power_ratio": lf_ratio,
     }
+    # print("Generic feature calculation done")
 
     # -----------------------------
     # EEG-specific Features
     # -----------------------------
     if category == "eeg":
-
+        # print("Calculating eeg features")
         row_dict["rms"] = rms_amplitude(data)
         row_dict["ptp"] = peak_to_peak(data)
         row_dict["max_amp"] = np.max(data)
@@ -202,10 +204,23 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
         row_dict["delta_beta_ratio"] = (
                 row_dict["rel_delta"] / (row_dict["rel_beta"] + 1e-6)
         )
+        # print("eeg feature calculations done")
 
         try:
-            sp = yasa.spindles_detect(data, fs, hypno=hypnogram, include=(1,
-                                                                          2))  # There is processing in the team_code, so there is no reason to multiply the data by 1e6
+            # print("calculating spindle features")
+            relevant_stages = [1, 2]
+            if hypnogram_subset is not None and np.any(
+                    np.isin(hypnogram_subset, relevant_stages)):
+
+                sp = yasa.spindles_detect(
+                    data * (1 if processed else 1e6),
+                    fs,
+                    hypno=hypnogram_subset,
+                    include=(1, 2)
+                )
+
+            else:
+                sp = None
 
             if sp is not None:
                 sp_summary = sp.summary()
@@ -243,8 +258,9 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
                 row_dict["spindle_mean_relpower"] = 0
                 row_dict["spindle_mean_rms"] = 0
                 row_dict["spindle_total_duration"] = 0
+            # print("Spindle feature calculations done")
         except Exception as e:
-            print(f"Exception: {e}")
+            print(f"EEG extraction error: {e}")
             row_dict["spindle_count"] = 0
             row_dict["spindle_density"] = 0
             row_dict["spindle_mean_amp"] = 0
@@ -260,7 +276,7 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
     # ECG-specific Features
     # -----------------------------
     elif category == "ecg":
-
+        # print("Calculating ecg features")
         row_dict["rms"] = rms_amplitude(data)
         row_dict["ptp"] = peak_to_peak(data)
         row_dict["max_amp"] = np.max(data)
@@ -271,7 +287,7 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
         row_dict["amp_out_of_bounds"] = amplitude_out_of_bounds(data)
         row_dict["hf_ratio_signal"] = high_frequency_ratio(data, fs)
         row_dict["max_slope"] = max_slope(data, fs)
-
+        # print("Ecg feature calculations done")
         try:
             '''
             ecg_cleaned = nk.ecg_clean(data, sampling_rate=fs)
@@ -286,6 +302,7 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
                 sdnn = np.nan
             #row_dict["hrv_sdnn"] = sdnn
             '''
+            # print("Calculating HRV features")
             pre = Pre.Preprocessing(data, fs)
             filtered_signal = pre.notch(
                 n_freq=60)  # 50 Hz for european powerline, 60 Hz for USA
@@ -329,10 +346,11 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
             row_dict["LF_NORM"] = hrv_biomarker["LF_NORM"]
             row_dict["HF_NORM"] = hrv_biomarker["HF_NORM"]
             row_dict["LF_HF_RATIO"] = hrv_biomarker["LF_HF_RATIO"]
+            # print("HRV feature calculations done")
 
 
         except Exception as e:
-            print(f"Exception occured while reading file: {e}")
+            print(f"ECG extraction error: {e}")
             row_dict["mean_hr"] = np.nan
             row_dict["AVNN"] = np.nan
             row_dict["SDNN"] = np.nan
@@ -365,31 +383,34 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
     # EMG-specific Features
     # -----------------------------
     elif category in ["chin emg", "leg emg"]:
-
+        # print("Calculating EMG features")
         row_dict["powerline_ratio"] = powerline_ratio(data, fs)
         row_dict["hf_ratio_signal"] = high_frequency_ratio(data, fs)
         row_dict["spec_peak_min_ratio"] = spectral_peak_to_min_ratio(data, fs)
-
+        # print("EMG feature calculations done")
     # -----------------------------
     # Respiratory Features
     # -----------------------------
     elif category == "resp":
 
         try:
+            # print("Calculating respiratory features")
             resp_cleaned = nk.rsp_clean(data, sampling_rate=fs)
             peaks, info = nk.rsp_peaks(resp_cleaned, sampling_rate=fs)
 
             intervals = np.diff(peaks["RSP_Peaks"]) / fs
             mean_int = np.mean(intervals)
             mean_rr = 60 / mean_int if (
-                        len(intervals) > 0 and mean_int != 0) else np.nan
+                    len(intervals) > 0 and mean_int != 0) else np.nan
             resp_var = np.std(intervals) if len(intervals) > 0 else np.nan
 
             row_dict["mean_resp_rate"] = mean_rr
             row_dict["resp_variability"] = resp_var
             # currently problematic due to using an old scipy version
-
+            '''
+            print("Respiratory feature calculations done")
             if ch_name == "spo2":
+                print("Calculating spo2 features")
                 spo2_df = get_spo2_biomarkers(data, fs, patient_name="unknown")
 
                 if len(spo2_df) > 0:
@@ -399,6 +420,7 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
                     for col in spo2_row.index:
                         if col not in ["patient", "time begin", "time end"]:
                             row_dict[col] = spo2_row[col]
+                    print("Spo2 feature calculations done")
             else:
                 for col in [
                     "AV", "MED", "Min", "SD", "RG", "P",
@@ -411,13 +433,13 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
                     "AC", "PSD_total","PSD_band", "PSD_ratio", "PSD_peak"
                 ]:
                     row_dict[col] = 0
-
+            '''
 
         except Exception as e:
             print(f"SPO2 extraction error: {e}")
             row_dict["mean_resp_rate"] = np.nan
             row_dict["resp_variability"] = np.nan
-
+            '''
             for col in [
                 "AV", "MED", "Min", "SD", "RG", "P",
                 "M", "ZC", "DI", "ODI", "DL_u", "DL_sd", "DA100_u",
@@ -429,23 +451,83 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram):
                 "PSD_band", "PSD_ratio", "PSD_peak"
             ]:
                 row_dict[col] = 0
-
+            '''
     return row_dict
 
 
-def assess_signal_quality(raw_psg, category_lookup, hypnogram=None):
+def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,processed=True):
+    data, _ = raw_psg[ch_name]
+    data = data.ravel()
+    fs = raw_psg.info["sfreq"]
+
+    data = data[~np.isnan(data)]
+
+    if len(data) < 10:
+        return None
+
+    category = category_lookup.get(ch_name, "unknown")
+
+    if hypnogram is None:
+        # Fallback to whole-signal processing if no hypnogram
+        res = extract_features(data, fs, ch_name, category, None, processed)
+        return [{**res, "stage": "All"}] if res else []
+
+    hypnogram = np.repeat(hypnogram, int(fs*30)) #Not having this caused so much problems.
+
+    min_len = min(len(data), len(hypnogram))
+    data = data[:min_len]
+    hypnogram = hypnogram[:min_len]
+
+    #print(f"DEBUG: Channel {ch_name} data length: {len(data)}")
+    #print(f"DEBUG: Hypnogram data length: {len(hypnogram)}")
+
+    stage_results = []
+    unique_stages = np.unique(hypnogram)
+    #print(unique_stages)
+    for stage_val in unique_stages:
+        #stage_name = STAGE_MAP.get(stage_val, f"Unknown_{stage_val}")
+        if stage_val not in STAGE_MAP:
+            continue  # We don't need the undefined stages
+        stage_name = STAGE_MAP[stage_val]
+
+        # Mask data for this specific stage
+        mask = (hypnogram == stage_val)
+        stage_data = data[mask]
+        stage_hypno = hypnogram[mask]
+
+        #print(  f"DEBUG: {ch_name} Stage {stage_name} has {len(stage_data)} samples.")
+        #print(f"DEBUG: Threshold is {fs * 10}")
+
+        if len(stage_data) < fs * 10:  # Skip stages shorter than 10 seconds
+        #if len(stage_data)<10: #I thought 10 second stages were too long, but it turned out the hypnograms were 30 seconds long in each datapoint
+            continue
+
+        features = extract_features(stage_data, fs, ch_name, category,
+                                    stage_hypno, processed)
+        if features:
+            features["stage"] = stage_name
+            stage_results.append(features)
+
+    return stage_results
+
+
+def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,
+                          processed=True):
     quality_metrics = []
 
-    results = Parallel(n_jobs=-1)(
+    results = Parallel(n_jobs=2)(
         delayed(process_channel)(
-            ch, raw_psg, category_lookup, hypnogram
+            ch, raw_psg, category_lookup, hypnogram, processed
         )
         for ch in raw_psg.ch_names
     )
 
-    quality_metrics = [r for r in results if r is not None]
+    flattened = []
+    for r in results:
+        if r:
+            flattened.extend(r)
 
-    return pd.DataFrame(quality_metrics)
+    return pd.DataFrame(flattened)
 
 
 # 3.2 Helper functions for EEG----------------------

@@ -1,11 +1,6 @@
 import numpy as np
 import hrv_bms as hrv
 
-#--------------------
-#   This is from Szabolcs, I copy-pasted from his toolbox. His original code can be seen in https://github.com/pszabolcsm/pyPSG
-#   The dataset has no ppg data, so instead of importing his toolbox, I crtl+c crtl+v'd his code, because pyPPG also
-#   has these dependency issues of using older versions of common packages.
-#--------------------
 
 def get_hrv_biomarkers(peaks, fs):
     """
@@ -23,7 +18,28 @@ def get_hrv_biomarkers(peaks, fs):
     # Calculate RR intervals in seconds (differences between successive peaks)
     rr_intervals = np.diff(peaks) / fs
 
-    # Extract all available HRV metrics from the RR intervals
-    all_metrics = hrv.get_all_metrics(rr_intervals)
+    if len(rr_intervals) < 5:
+        # Return a dictionary of NaNs with the same keys
+        return {
+            "AVNN": np.nan, "SDNN": np.nan, "RMSSD": np.nan, "PNN50": np.nan,
+            "SEM": np.nan, "PIP": np.nan, "IALS": np.nan, "PSS": np.nan,
+            "PAS": np.nan, "SD1": np.nan, "SD2": np.nan, "alpha_1": np.nan,
+            "alpha_2": np.nan, "MSE": np.nan, "TOTAL_POWER": np.nan,
+            "VLF_POWER": np.nan, "LF_POWER": np.nan, "HF_POWER": np.nan,
+            "VLF_NORM": np.nan, "LF_NORM": np.nan, "HF_NORM": np.nan,
+            "LF_HF_RATIO": np.nan
+        }
 
-    return all_metrics
+        # Extract all available HRV metrics from the RR intervals
+    try:
+        all_metrics = hrv.get_all_metrics(rr_intervals)
+        return all_metrics
+    except Exception as e:
+        print(f"Internal HRV calculation error: {e}")
+        # Return NaNs if a specific math operation still fails
+        return {k: np.nan for k in
+                ["AVNN", "SDNN", "RMSSD", "PNN50", "SEM", "PIP",
+                 "IALS", "PSS", "PAS", "SD1", "SD2", "alpha_1",
+                 "alpha_2", "MSE", "TOTAL_POWER", "VLF_POWER",
+                 "LF_POWER", "HF_POWER", "VLF_NORM", "LF_NORM",
+                 "HF_NORM", "LF_HF_RATIO"]}
