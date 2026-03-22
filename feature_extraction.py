@@ -65,6 +65,17 @@ ALL_FEATURE_COLUMNS = ["subject", "session", "channel", "stage", "category",
                        "spindle_duration_std", "spindle_mean_freq",
                        "spindle_mean_relpower", "spindle_mean_rms",
                        "spindle_total_duration",
+                        # Slow Wave Features (still in EEG)
+                        "sw_count", "sw_density", "sw_mean_amp", "sw_amp_std",
+                        "sw_mean_duration", "sw_duration_std", "sw_mean_freq",
+                        "sw_total_duration",
+                        # Slow Wave–Spindle Coupling (still in EEG)
+                        "sw_spindle_coupling_count",
+                        "sw_spindle_coupling_ratio",
+                        "sw_spindle_phase_mean",
+                        "sw_spindle_phase_std",
+                        "sw_spindle_delay_mean",
+                        "sw_spindle_delay_std",
                        # ECG
                        "flatline_duration", "is_flat", "amp_out_of_bounds",
                        "hf_ratio_signal", "max_slope", "mean_hr",
@@ -219,8 +230,17 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                     include=(1, 2)
                 )
 
+                sw = yasa.sw_detect(
+                    data * (1 if processed else 1e6),
+                    fs,
+                    hypno=hypnogram_subset,
+                    include=(1, 2),
+                    coupling=True
+                )
+
             else:
                 sp = None
+                sw = None
 
             if sp is not None:
                 sp_summary = sp.summary()
@@ -259,6 +279,68 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                 row_dict["spindle_mean_rms"] = 0
                 row_dict["spindle_total_duration"] = 0
             # print("Spindle feature calculations done")
+
+            if sw is not None:
+
+                sw_summary = sw.summary()
+
+                n_sw = len(sw_summary)
+                recording_minutes = len(data) / fs / 60
+
+                row_dict["sw_count"] = n_sw
+                row_dict["sw_density"] = n_sw / recording_minutes
+
+                row_dict["sw_mean_amp"] = sw_summary["PTP"].mean()
+                row_dict["sw_amp_std"] = sw_summary["PTP"].std()
+
+                row_dict["sw_mean_duration"] = sw_summary["Duration"].mean()
+                row_dict["sw_duration_std"] = sw_summary["Duration"].std()
+
+                row_dict["sw_mean_freq"] = sw_summary["Frequency"].mean()
+
+                row_dict["sw_total_duration"] = sw_summary["Duration"].sum()
+
+                # Coupling metrics
+                if "SpindlePhase" in sw_summary.columns:
+
+                    coupled = sw_summary.dropna(subset=["SpindlePhase"])
+
+                    row_dict["sw_spindle_coupling_count"] = len(coupled)
+
+                    row_dict["sw_spindle_coupling_ratio"] = (
+                        len(coupled) / n_sw if n_sw > 0 else 0
+                    )
+
+                    row_dict["sw_spindle_phase_mean"] = coupled["SpindlePhase"].mean()
+                    row_dict["sw_spindle_phase_std"] = coupled["SpindlePhase"].std()
+
+                    row_dict["sw_spindle_delay_mean"] = coupled["SpindleDelay"].mean()
+                    row_dict["sw_spindle_delay_std"] = coupled["SpindleDelay"].std()
+
+                else:
+                    row_dict["sw_spindle_coupling_count"] = 0
+                    row_dict["sw_spindle_coupling_ratio"] = 0
+                    row_dict["sw_spindle_phase_mean"] = 0
+                    row_dict["sw_spindle_phase_std"] = 0
+                    row_dict["sw_spindle_delay_mean"] = 0
+                    row_dict["sw_spindle_delay_std"] = 0
+
+                    row_dict["sw_count"] = 0
+                    row_dict["sw_density"] = 0
+                    row_dict["sw_mean_amp"] = 0
+                    row_dict["sw_amp_std"] = 0
+                    row_dict["sw_mean_duration"] = 0
+                    row_dict["sw_duration_std"] = 0
+                    row_dict["sw_mean_freq"] = 0
+                    row_dict["sw_total_duration"] = 0
+
+                    row_dict["sw_spindle_coupling_count"] = 0
+                    row_dict["sw_spindle_coupling_ratio"] = 0
+                    row_dict["sw_spindle_phase_mean"] = 0
+                    row_dict["sw_spindle_phase_std"] = 0
+                    row_dict["sw_spindle_delay_mean"] = 0
+                    row_dict["sw_spindle_delay_std"] = 0
+
         except Exception as e:
             print(f"EEG extraction error: {e}")
             row_dict["spindle_count"] = 0
@@ -271,6 +353,28 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
             row_dict["spindle_mean_relpower"] = 0
             row_dict["spindle_mean_rms"] = 0
             row_dict["spindle_total_duration"] = 0
+            row_dict["sw_spindle_coupling_count"] = 0
+            row_dict["sw_spindle_coupling_ratio"] = 0
+            row_dict["sw_spindle_phase_mean"] = 0
+            row_dict["sw_spindle_phase_std"] = 0
+            row_dict["sw_spindle_delay_mean"] = 0
+            row_dict["sw_spindle_delay_std"] = 0
+
+            row_dict["sw_count"] = 0
+            row_dict["sw_density"] = 0
+            row_dict["sw_mean_amp"] = 0
+            row_dict["sw_amp_std"] = 0
+            row_dict["sw_mean_duration"] = 0
+            row_dict["sw_duration_std"] = 0
+            row_dict["sw_mean_freq"] = 0
+            row_dict["sw_total_duration"] = 0
+
+            row_dict["sw_spindle_coupling_count"] = 0
+            row_dict["sw_spindle_coupling_ratio"] = 0
+            row_dict["sw_spindle_phase_mean"] = 0
+            row_dict["sw_spindle_phase_std"] = 0
+            row_dict["sw_spindle_delay_mean"] = 0
+            row_dict["sw_spindle_delay_std"] = 0
 
     # -----------------------------
     # ECG-specific Features
