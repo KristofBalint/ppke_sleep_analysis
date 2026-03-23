@@ -175,11 +175,11 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     # max_leaf_nodes = 34  # Maximum number of leaf nodes in each tree.
     # random_state = 56  # Random state; set for reproducibility.
 
-    params = {'max_depth': 7, 'learning_rate': 0.011500481494966235,
-              'n_estimators': 353, 'subsample': 0.51954698162124,
-              'colsample_bytree': 0.699941687775994, 'gamma': 4.84909380072766,
-              'min_child_weight': 8, 'reg_alpha': 3.5045344473732563e-07,
-              'reg_lambda': 9.129867937103156e-07}
+    params = {'max_depth': 3, 'learning_rate': 0.011794129077895139,
+              'n_estimators': 526, 'subsample': 0.8125603735318965,
+              'colsample_bytree': 0.5493983646790783, 'gamma': 3.9938920518207985,
+              'min_child_weight': 1, 'reg_alpha': 1.3324786128118649,
+              'reg_lambda': 0.02264841408695337}
 
     # Fit the model.
     # model = RandomForestClassifier(
