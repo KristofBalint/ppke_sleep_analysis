@@ -376,7 +376,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
             row_dict["sw_spindle_delay_mean"] = 0
             row_dict["sw_spindle_delay_std"] = 0
     return row_dict
-    # -----------------------------
+    # ----------------------------
     # ECG-specific Features
     # -----------------------------
     '''
