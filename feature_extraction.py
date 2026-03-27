@@ -77,17 +77,17 @@ ALL_FEATURE_COLUMNS = ["subject", "session", "channel", "stage", "category",
                         "sw_spindle_delay_mean",
                         "sw_spindle_delay_std",
                        # ECG
-                       "flatline_duration", "is_flat", "amp_out_of_bounds",
-                       "hf_ratio_signal", "max_slope", "mean_hr",
+                       #"flatline_duration", "is_flat", "amp_out_of_bounds",
+                       #"hf_ratio_signal", "max_slope", "mean_hr",
                        # HRV metrics (still in ECG)
-                       "AVNN", "SDNN", "RMSSD", "PNN50", "SEM", "PIP", "IALS",
-                       "PSS", "PAS", "SD1", "SD2", "alpha_1", "alpha_2", "MSE",
-                       "TOTAL_POWER", "VLF_POWER", "LF_POWER", "HF_POWER",
-                       "VLF_NORM", "LF_NORM", "HF_NORM", "LF_HF_RATIO",
+                       #"AVNN", "SDNN", "RMSSD", "PNN50", "SEM", "PIP", "IALS",
+                       #"PSS", "PAS", "SD1", "SD2", "alpha_1", "alpha_2", "MSE",
+                       #"TOTAL_POWER", "VLF_POWER", "LF_POWER", "HF_POWER",
+                       #"VLF_NORM", "LF_NORM", "HF_NORM", "LF_HF_RATIO",
                        # EMG
-                       "powerline_ratio", "spec_peak_min_ratio",
+                       #"powerline_ratio", "spec_peak_min_ratio",
                        # Resp
-                       "mean_resp_rate", "resp_variability"
+                       #"mean_resp_rate", "resp_variability"
                        # SpO2 biomarkers (still in Resp) #compatibility issues with old version
 
                        #                  "AV", "MED", "Min", "SD", "RG", "P",
@@ -376,9 +376,11 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
             row_dict["sw_spindle_delay_mean"] = 0
             row_dict["sw_spindle_delay_std"] = 0
 
+    return row_dict
     # -----------------------------
     # ECG-specific Features
     # -----------------------------
+    '''
     elif category == "ecg":
         # print("Calculating ecg features")
         row_dict["rms"] = rms_amplitude(data)
@@ -393,7 +395,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
         row_dict["max_slope"] = max_slope(data, fs)
         # print("Ecg feature calculations done")
         try:
-            '''
+            
             ecg_cleaned = nk.ecg_clean(data, sampling_rate=fs)
             peaks, info = nk.ecg_peaks(ecg_cleaned, sampling_rate=fs)
             hr = nk.ecg_rate(peaks, sampling_rate=fs, desired_length=len(data))
@@ -405,7 +407,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
             else:
                 sdnn = np.nan
             #row_dict["hrv_sdnn"] = sdnn
-            '''
+            
             # print("Calculating HRV features")
             pre = Pre.Preprocessing(data, fs)
             filtered_signal = pre.notch(
@@ -480,21 +482,24 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
             row_dict["LF_NORM"] = np.nan
             row_dict["HF_NORM"] = np.nan
             row_dict["LF_HF_RATIO"] = np.nan
-
+    '''
 
 
     # -----------------------------
     # EMG-specific Features
     # -----------------------------
+    '''
     elif category in ["chin emg", "leg emg"]:
         # print("Calculating EMG features")
         row_dict["powerline_ratio"] = powerline_ratio(data, fs)
         row_dict["hf_ratio_signal"] = high_frequency_ratio(data, fs)
         row_dict["spec_peak_min_ratio"] = spectral_peak_to_min_ratio(data, fs)
         # print("EMG feature calculations done")
+    '''
     # -----------------------------
     # Respiratory Features
     # -----------------------------
+    '''
     elif category == "resp":
 
         try:
@@ -511,7 +516,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
             row_dict["mean_resp_rate"] = mean_rr
             row_dict["resp_variability"] = resp_var
             # currently problematic due to using an old scipy version
-            '''
+            
             print("Respiratory feature calculations done")
             if ch_name == "spo2":
                 print("Calculating spo2 features")
@@ -537,13 +542,13 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                     "AC", "PSD_total","PSD_band", "PSD_ratio", "PSD_peak"
                 ]:
                     row_dict[col] = 0
-            '''
+            
 
         except Exception as e:
             print(f"SPO2 extraction error: {e}")
             row_dict["mean_resp_rate"] = np.nan
             row_dict["resp_variability"] = np.nan
-            '''
+            
             for col in [
                 "AV", "MED", "Min", "SD", "RG", "P",
                 "M", "ZC", "DI", "ODI", "DL_u", "DL_sd", "DA100_u",
@@ -555,8 +560,9 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                 "PSD_band", "PSD_ratio", "PSD_peak"
             ]:
                 row_dict[col] = 0
-            '''
-    return row_dict
+            
+    '''
+
 
 
 def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,processed=True):
