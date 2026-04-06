@@ -159,6 +159,18 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 feat_df["Race_Unavailable"]=demographic_features[7]
                 feat_df["Race_White"]=demographic_features[8]
                 feat_df["BMI"]=demographic_features[9]
+                feat_df["Ahi_auto"]=algorithmic_features[0]
+                feat_df["Ar_auto"]=algorithmic_features[1]
+                feat_df["Limb_auto"]=algorithmic_features[2]
+                feat_df["W_pct"]=algorithmic_features[3]
+                feat_df["N1_pct"]=algorithmic_features[4]
+                feat_df["N2_pct"]=algorithmic_features[5]
+                feat_df["N3_pct"]=algorithmic_features[6]
+                feat_df["R_pct"]=algorithmic_features[7]
+                feat_df["efficiency"]=algorithmic_features[8]
+                feat_df["W_prob"]=algorithmic_features[9]
+                feat_df["N3_prob"]=algorithmic_features[10]
+                feat_df["Ar_prob"]=algorithmic_features[11]
                 features.append(feat_df)
                 #features.append(np.hstack(    [demographic_features, physiological_vector,algorithmic_features]))
                 labels.append(label)
@@ -312,6 +324,18 @@ def run_model(model, record, data_folder, verbose):
     feat_df["Race_Unavailable"] = demographic_features[7]
     feat_df["Race_White"] = demographic_features[8]
     feat_df["BMI"] = demographic_features[9]
+    feat_df["Ahi_auto"]=algorithmic_features[0]
+    feat_df["Ar_auto"]=algorithmic_features[1]
+    feat_df["Limb_auto"]=algorithmic_features[2]
+    feat_df["W_pct"]=algorithmic_features[3]
+    feat_df["N1_pct"]=algorithmic_features[4]
+    feat_df["N2_pct"]=algorithmic_features[5]
+    feat_df["N3_pct"]=algorithmic_features[6]
+    feat_df["R_pct"]=algorithmic_features[7]
+    feat_df["efficiency"]=algorithmic_features[8]
+    feat_df["W_prob"]=algorithmic_features[9]
+    feat_df["N3_prob"]=algorithmic_features[10]
+    feat_df["Ar_prob"]=algorithmic_features[11]
     features=feat_df[feature_list].to_numpy.flatten().astype(np.float32)
 
     #features = np.hstack([demographic_features, physiological_features,algorithmic_features]).reshape(1, -1)
