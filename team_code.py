@@ -19,9 +19,11 @@ from tqdm import tqdm
 from helper_code import *
 import pandas as pd
 from feature_extraction import assess_signal_quality, ALL_FEATURE_COLUMNS, \
-    MASTER_FEATURE_NAMES, UNIQUE_CHANNELS, get_category_map
+    get_master_feature_names, UNIQUE_CHANNELS, get_category_map, valid_features, \
+    stratified_pca_feature_selection
 import mne
 from xgboost import XGBClassifier
+from sklearn import metrics
 
 ################################################################################
 # Path & Constant Configuration (Added for Robustness)
@@ -141,10 +143,24 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             # Store the features and labels, but
             # the human annotations are not available on the hidden validation and test sets, but you
             # may want to consider how to use them for training.
+            print("CONTENT AND TYPE OF LABEL")
+            print(label)
+            print(type(label))
             if label == 0 or label == 1:
-                features.append(np.hstack(
-                    [demographic_features, physiological_features,
-                     algorithmic_features]))
+                #physiological_vector=physiological_features.to_numpy().flatten().astype(np.float32)
+                feat_df=physiological_features.copy()
+                feat_df["Cognitive_Impairment"] = label
+                feat_df["Age"]=demographic_features[0]
+                feat_df["Sex_Female"]=demographic_features[1]
+                feat_df["Sex_Male"]=demographic_features[2]
+                feat_df["Race_Asian"]=demographic_features[4]
+                feat_df["Race_Black"]=demographic_features[5]
+                feat_df["Race_Others"]=demographic_features[6]
+                feat_df["Race_Unavailable"]=demographic_features[7]
+                feat_df["Race_White"]=demographic_features[8]
+                feat_df["BMI"]=demographic_features[9]
+                features.append(feat_df)
+                #features.append(np.hstack(    [demographic_features, physiological_vector,algorithmic_features]))
                 labels.append(label)
 
             if 'physiological_data' in locals(): del physiological_data
@@ -158,8 +174,42 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
     pbar.close()
 
+    params = {'max_depth': 7, 'learning_rate': 0.030842680992267595, 'n_estimators': 963, 'subsample': 0.668562285184131, 'colsample_bytree': 0.6664590708996059, 'gamma': 1.0645185377275237, 'min_child_weight': 16, 'reg_alpha': 0.0600354240141498, 'reg_lambda': 35.771321493090454}
+
+    full_df = pd.concat(features, ignore_index=True)
+    y = full_df["Cognitive_Impairment"]
+    ranked_features = stratified_pca_feature_selection(full_df, y, params)
+
+    percentages = list(range(50, 4, -5))
+
+    best_auc = 0
+    best_features = None
+
+    for p in percentages:
+
+        n_keep = int(len(ranked_features) * (p / 100))
+        selected = ranked_features[:n_keep]
+
+        X = full_df[selected]
+        y = full_df["Cognitive_Impairment"]
+
+        model = XGBClassifier(**params, tree_method="hist")
+        model.fit(X, y)
+
+        preds = model.predict_proba(X)[:, 1]
+        auc = metrics.roc_auc_score(y, preds)
+
+        if auc > best_auc:
+            best_auc = auc
+            best_features = selected
+
     lengths = [len(f) for f in features]
     print(f"Unique feature lengths found: {set(lengths)}")
+
+    selected_features = best_features
+
+    X = full_df[selected_features]
+    y = full_df["Cognitive_Impairment"]
 
     features = np.asarray(features, dtype=np.float32)
     labels = np.asarray(labels, dtype=bool)
@@ -168,35 +218,28 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     if verbose:
         print('Training the model on the data...')
 
-    # This very simple model trains a random forest model with very simple features.
 
-    # Define the parameters for the random forest classifier and regressor.
-    # n_estimators = 12  # Number of trees in the forest.
-    # max_leaf_nodes = 34  # Maximum number of leaf nodes in each tree.
-    # random_state = 56  # Random state; set for reproducibility.
+    print(X.shape)
+    print(y.shape)
 
-    params = {'max_depth': 3, 'learning_rate': 0.011794129077895139,
-              'n_estimators': 526, 'subsample': 0.8125603735318965,
-              'colsample_bytree': 0.5493983646790783, 'gamma': 3.9938920518207985,
-              'min_child_weight': 1, 'reg_alpha': 1.3324786128118649,
-              'reg_lambda': 0.02264841408695337}
+    X_np = X.to_numpy().flatten().astype(np.float32)
+    y_np = y.to_numpy().flatten().astype(bool)
+    print(X_np.shape)
+    print(y_np.shape)
 
-    # Fit the model.
-    # model = RandomForestClassifier(
-    #    n_estimators=n_estimators, max_leaf_nodes=max_leaf_nodes, random_state=random_state).fit(features, labels)
     model = XGBClassifier(
         **params,
         objective="binary:logistic",
         eval_metric="auc",
         tree_method="hist",
         enable_categorical=True
-    ).fit(features, labels)
+    ).fit(X_np, y_np)
 
     # Create a folder for the model if it does not already exist.
     os.makedirs(model_folder, exist_ok=True)
 
     # Save the model.
-    save_model(model_folder, model)
+    save_model(model_folder, model,selected_features)
 
     if verbose:
         print('Done.')
@@ -215,6 +258,7 @@ def load_model(model_folder, verbose):
 # arguments of this function.
 def run_model(model, record, data_folder, verbose):
     # Load the model.
+    feature_list=model['feature_list']
     model = model['model']
 
     # Extract identifiers from the record dictionary
@@ -254,11 +298,23 @@ def run_model(model, record, data_folder, verbose):
     else:
         # Fallback to zeros if file is missing (length 49 in original code)
         # physiological_features = np.zeros(49)
+        MASTER_FEATURE_NAMES=get_master_feature_names(get_category_map(DEFAULT_CSV_PATH))
         physiological_features = np.zeros(
             len(MASTER_FEATURE_NAMES))
 
-    features = np.hstack([demographic_features, physiological_features,
-                          algorithmic_features]).reshape(1, -1)
+    feat_df = physiological_features.copy()
+    feat_df["Age"] = demographic_features[0]
+    feat_df["Sex_Female"] = demographic_features[1]
+    feat_df["Sex_Male"] = demographic_features[2]
+    feat_df["Race_Asian"] = demographic_features[4]
+    feat_df["Race_Black"] = demographic_features[5]
+    feat_df["Race_Others"] = demographic_features[6]
+    feat_df["Race_Unavailable"] = demographic_features[7]
+    feat_df["Race_White"] = demographic_features[8]
+    feat_df["BMI"] = demographic_features[9]
+    features=feat_df[feature_list].to_numpy.flatten().astype(np.float32)
+
+    #features = np.hstack([demographic_features, physiological_features,algorithmic_features]).reshape(1, -1)
 
     # Get the model outputs.
     binary_output = model.predict(features)[0]
@@ -322,8 +378,8 @@ def extract_demographic_features(data):
 
 def extract_physiological_features(physiological_data, physiological_fs,
                                    csv_path=DEFAULT_CSV_PATH,
-                                   category_lookup=get_category_map(
-                                       DEFAULT_CSV_PATH), hypnogram=None):
+                                   category_lookup=get_category_map(DEFAULT_CSV_PATH),
+                                   hypnogram=None):
     """
     Standardizes channels and extracts statistical/spectral features.
     """
@@ -344,8 +400,7 @@ def extract_physiological_features(physiological_data, physiological_fs,
         new_label = rename_map.get(old_label, old_label.lower())
         processed_channels[new_label] = data
         # Mapping the sampling rate to the new label
-        processed_fs[new_label] = physiological_fs.get(old_label,
-                                                       200.0)  # Default to 200 if missing
+        processed_fs[new_label] = physiological_fs.get(old_label,200.0)  # Default to 200 if missing
 
     class FakeRaw:
         def __init__(self, data_dict, fs_dict):
@@ -361,34 +416,46 @@ def extract_physiological_features(physiological_data, physiological_fs,
     raw_psg = FakeRaw(processed_channels, physiological_fs)
     quality_df = assess_signal_quality(raw_psg, category_lookup,
                                        hypnogram=hypnogram)
-    print(quality_df)
+    print(f"Shape originally {quality_df.shape}")
     quality_df = quality_df.reindex(columns=ALL_FEATURE_COLUMNS)
     if 'subject' not in quality_df.columns:
         print("No subject name")
     if 'session' not in quality_df.columns:
         print("No session name")
-    print(quality_df)
+    print(f"Shape after reindexing {quality_df.shape}")
     feature_df = quality_df.pivot(index=['subject', 'session'],
-                                  columns=['channel', 'stage'])
-    print(feature_df)
-    feature_df.columns = [f"{ch}_{st}_{feat}" for feat, ch, st in
-                          feature_df.columns]
+                                  columns=['category','channel', 'stage'])
+    print(f"Shape after pivoting {feature_df.shape}")
+    valid_cols=[col for col in feature_df.columns
+                if col[0] in valid_features.get(col[1],[])]
+    feature_df=feature_df[valid_cols]
+    print(f"Shape after filtering invalid columns")
+    feature_df.columns = [f"{col[1]}-{col[2]}-{col[3]}-{col[0]}" if isinstance(col, tuple) else col
+                            for col in feature_df.columns.values]
 
-    feature_df = feature_df.reindex(columns=MASTER_FEATURE_NAMES, fill_value=0)
 
+    MASTER_FEATURE_NAMES=get_master_feature_names(category_lookup)
+    feature_df = feature_df.reindex(columns=MASTER_FEATURE_NAMES, fill_value=np.nan)
+
+    feature_df["subject"] = feature_df.index.get_level_values(0)
+    feature_df["session"] = feature_df.index.get_level_values(1)
+
+    return feature_df.reset_index(drop=True)
+
+    '''
     final_vector = feature_df.to_numpy().flatten().astype(np.float32)
 
     # Safety Check:
     expected_len = len(MASTER_FEATURE_NAMES)
     if len(final_vector) != expected_len:
         # This should be impossible now, but good for debugging
-        print("BITCH")
+        #print("BITCH")
         print(len(final_vector))
         print(expected_len)
         return np.zeros(expected_len, dtype=np.float32)
 
     return final_vector
-
+    '''
     # quality_df = quality_df.fillna(0)
 
     # feature_df = quality_df.drop(
@@ -547,7 +614,7 @@ def extract_human_annotations_features(human_data):
 
 
 # Save your trained model.
-def save_model(model_folder, model):
-    d = {'model': model}
+def save_model(model_folder, model,feature_list):
+    d = {'model': model,'feature_list':feature_list}
     filename = os.path.join(model_folder, 'model.sav')
     joblib.dump(d, filename, protocol=0)
