@@ -836,6 +836,7 @@ def stratified_pca_feature_selection(df, y, params):
     base_meta_cols = ['BMI', 'Age', 'Race_Asian', 'Race_Black',
                       'Race_Others','Race_Unavailable',
                       'Race_White','Sex_Female','Sex_Male']
+    base_annotation_cols=["Ahi_auto","Ar_auto","Limb_auto","W_pct","N1_pct","N2_pct","N3_pct","R_pct","efficiency","W_prob","N3_prob","Ar_prob"]
 
     categories = ['ecg','eeg','eog','emg','resp']
     stages = ["N1","N2","N3","Wake","REM"]
@@ -880,7 +881,7 @@ def stratified_pca_feature_selection(df, y, params):
         if len(cols)==0:
             continue
 
-        cols = cols + base_meta_cols
+        cols = cols + base_meta_cols + base_annotation_cols
 
         X_tr_sub = X_train[cols]
         X_te_sub = X_test[cols]
