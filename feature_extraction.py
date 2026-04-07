@@ -263,6 +263,35 @@ def synchrony_features(chest, abd, fs):
     return { "r": r, "ccc": ccc, "lag": lag, "peak_lag": peak_delay,
              "amp_ratio": amp_ratio, "phase_lock":phase_lock}
 
+def process_synchrony_pair(pair, raw_psg, STAGE_MAP, hypnogram):
+    if not (pair[0] in raw_psg.ch_names and pair[1] in raw_psg.ch_names):
+        return []
+
+    fs = raw_psg.info["sfreq"]
+    left, _ = raw_psg[pair[0]]
+    right, _ = raw_psg[pair[1]]
+    left, right = left.ravel(), right.ravel()
+    
+    # Align hypnogram
+    hyp = np.repeat(hypnogram, int(fs * 30))
+    min_len = min(len(left), len(right), len(hyp))
+    left, right, hyp = left[:min_len], right[:min_len], hyp[:min_len]
+
+    pair_results = []
+    for stage_val, stage_name in STAGE_MAP.items():
+        mask = (hyp == stage_val)
+        if np.sum(mask) < 5:
+            continue
+            
+        sync_feats = synchrony_features(left[mask], right[mask], fs)
+        # We store these with metadata so we can merge them later
+        pair_results.append({
+            "pair": tuple(pair),
+            "stage": stage_name,
+            **sync_feats
+        })
+    return pair_results
+
 def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                      processed=True):
     # -----------------------------
@@ -804,31 +833,36 @@ def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,processed=Tru
     for r in results:
         if r:
             flattened.extend(r)
+    flattened=pd.Dataframe(flattened)
 
-    if hypnogram is not None:
-        synchron_pairs = [["chest", "abd"], ["e1", "e2"], ["e1-m2", "e2-m1"], ["f3", "f4"],
-             ["f3-m2", "f4-m1"], ["c3", "c4"], ["c3-m2", "c4-m1"], ["o1", "o2"],
-             ["o1-m2", "o2-m1"], ["rleg+", "lleg+"], ["rleg-", "lleg-"]]
-        for pair in synchron_pairs:
-            if  pair[0] in raw_psg.ch_names and pair[1] in raw_psg.ch_names:
-                left, _ =raw_psg[pair[0]]
-                right, _ = raw_psg[pair[1]]
-                left = left.ravel()
-                right = right.ravel()
-                fs = raw_psg.info["sfreq"]
-                hyp = np.repeat(hypnogram, int(fs * 30))
-                for stage_val, stage_name in STAGE_MAP.items():
-                    mask = hyp == stage_val
-                if np.sum(mask) < 5:
-                    continue
-                left_s = left[mask]
-                right_s = right[mask]
-                feats = synchrony_features(left_s, right_s, fs)
-                for row in flattened:
-                    if row["channel"] in [pair[0], pair[1]] and row["stage"] == stage_name:
-                        row.update(feats)
+   if hypnogram is not None:
+        synchron_pairs = [
+            ["chest", "abd"], ["e1", "e2"], ["e1-m2", "e2-m1"], ["f3", "f4"],
+            ["f3-m2", "f4-m1"], ["c3", "c4"], ["c3-m2", "c4-m1"], ["o1", "o2"],
+            ["o1-m2", "o2-m1"], ["rleg+", "lleg+"], ["rleg-", "lleg-"]
+        ]
+        
+        sync_results = Parallel(n_jobs=-2, prefer="threads")(
+            delayed(process_synchrony_pair)(pair, raw_psg, STAGE_MAP, hypnogram)
+            for pair in synchron_pairs
+        )
+        
+        sync_flattened = [item for sublist in sync_results if sublist for item in sublist]
+        
+        if sync_flattened:
+            # Map synchrony results back to the main dataframe
+            for res in sync_flattened:
+                p1, p2 = res['pair']
+                stage = res['stage']
+                feats = {k: v for k, v in res.items() if k not in ['pair', 'stage']}
+                
+                # Update rows where channel is part of the pair AND stage matches
+                mask = (flattened['stage'] == stage) & (flattened['channel'].isin([p1, p2]))
+                for col, val in feats.items():
+                    flattened.loc[mask, col] = val
+                    
 
-    return pd.DataFrame(flattened)
+    return flattened
 
 
 def stratified_pca_feature_selection(df, y, params):
