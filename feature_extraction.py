@@ -59,33 +59,54 @@ STAGE_MAP = {
     5: "Wake"
 }
 
-metadata=["subject","session","channel","stage","category"]
-generic_features=["skewness", "kurtosis","flatline_pct", "clipping_pct", "abs_energy",
-                  "abs_sum_changes","mean_abs_change","root_mean_square","variation_coeff",
-                  "longest_strike_above_mean", "longest_strike_below_mean", "mean", "std", "variance","hf_power_ratio","lf_power_ratio"]
-emg_only_features=['hf_ratio_signal','powerline_ratio','spec_peak_min_ratio','energy_ratio_chunks']
-ecg_only_features_1=['rms','ptp','max_amp','flatline_duration','is_flat','amp_out_of_bounds',
-                     'hf_ratio_signal','max_slope','mean_hr',"mean_2nd_deriv_central"]
-ecg_only_features_2=["AVNN", "SDNN", "RMSSD", "PNN50", "SEM", "PIP", "IALS","PSS", "PAS",
-                     "SD1", "SD2", "alpha_1", "alpha_2", "MSE","TOTAL_POWER", "VLF_POWER", "LF_POWER", "HF_POWER","VLF_NORM", "LF_NORM", "HF_NORM", "LF_HF_RATIO"]
-eeg_only_features_1=['rms','ptp','max_amp','dominant_freq',
-                     'rel_delta','rel_theta','rel_alpha','rel_sigma','rel_beta','delta_beta_ratio',
-                     'time_rev_asym','num_peaks']
-eeg_only_features_2=['spindle_count','spindle_density','spindle_mean_amp','spindle_amp_std',
-                     'spindle_mean_duration','spindle_duration_std','spindle_mean_freq',
-                     'spindle_mean_relpower','spindle_mean_rms','spindle_total_duration']
-resp_only_features=['mean_resp_rate','resp_variability','linear_trend']
-synchrony_only_features=["r", "ccc", "lag", "peak_lag","amp_ratio", "phase_lock"]
-ALL_FEATURE_COLUMNS=list(set(metadata+generic_features+synchrony_only_features+emg_only_features+
-                             ecg_only_features_1+ecg_only_features_2+
-                             eeg_only_features_1+eeg_only_features_2+resp_only_features))
+metadata = ["subject", "session", "channel", "stage", "category"]
+generic_features = ["skewness", "kurtosis", "flatline_pct", "clipping_pct",
+                    "abs_energy",
+                    "abs_sum_changes", "mean_abs_change", "root_mean_square",
+                    "variation_coeff",
+                    "longest_strike_above_mean", "longest_strike_below_mean",
+                    "mean", "std", "variance", "hf_power_ratio",
+                    "lf_power_ratio"]
+emg_only_features = ['hf_ratio_signal', 'powerline_ratio',
+                     'spec_peak_min_ratio', 'energy_ratio_chunks']
+ecg_only_features_1 = ['rms', 'ptp', 'max_amp', 'flatline_duration', 'is_flat',
+                       'amp_out_of_bounds',
+                       'hf_ratio_signal', 'max_slope', 'mean_hr',
+                       "mean_2nd_deriv_central"]
+ecg_only_features_2 = ["AVNN", "SDNN", "RMSSD", "PNN50", "SEM", "PIP", "IALS",
+                       "PSS", "PAS",
+                       "SD1", "SD2", "alpha_1", "alpha_2", "MSE", "TOTAL_POWER",
+                       "VLF_POWER", "LF_POWER", "HF_POWER", "VLF_NORM",
+                       "LF_NORM", "HF_NORM", "LF_HF_RATIO"]
+eeg_only_features_1 = ['rms', 'ptp', 'max_amp', 'dominant_freq',
+                       'rel_delta', 'rel_theta', 'rel_alpha', 'rel_sigma',
+                       'rel_beta', 'delta_beta_ratio',
+                       'time_rev_asym', 'num_peaks']
+eeg_only_features_2 = ['spindle_count', 'spindle_density', 'spindle_mean_amp',
+                       'spindle_amp_std',
+                       'spindle_mean_duration', 'spindle_duration_std',
+                       'spindle_mean_freq',
+                       'spindle_mean_relpower', 'spindle_mean_rms',
+                       'spindle_total_duration']
+resp_only_features = ['mean_resp_rate', 'resp_variability', 'linear_trend']
+synchrony_only_features = ["r", "ccc", "lag", "peak_lag", "amp_ratio",
+                           "phase_lock"]
+ALL_FEATURE_COLUMNS = list(
+    set(metadata + generic_features + synchrony_only_features + emg_only_features +
+        ecg_only_features_1 + ecg_only_features_2 +
+        eeg_only_features_1 + eeg_only_features_2 + resp_only_features))
 valid_features = {
-    'eeg': eeg_only_features_1 + eeg_only_features_2 + generic_features+synchrony_only_features, #eeg has left and right synchrony
-    'leg emg': emg_only_features + generic_features+synchrony_only_features,#leg emg has left and right synchrony
-    'chin emg': emg_only_features + generic_features,#synchrony features were not calculated for chin emg
-    'ecg': ecg_only_features_1 + ecg_only_features_2 + generic_features,#synchrony features were not calculated for ecg
-    'resp': resp_only_features + generic_features+synchrony_only_features,#synchrony of abdominal and chest movement
-    'eog': generic_features+synchrony_only_features#synchrony of eyes
+    'eeg': eeg_only_features_1 + eeg_only_features_2 + generic_features + synchrony_only_features,
+    # eeg has left and right synchrony
+    'leg emg': emg_only_features + generic_features + synchrony_only_features,
+    # leg emg has left and right synchrony
+    'chin emg': emg_only_features + generic_features,
+    # synchrony features were not calculated for chin emg
+    'ecg': ecg_only_features_1 + ecg_only_features_2 + generic_features,
+    # synchrony features were not calculated for ecg
+    'resp': resp_only_features + generic_features + synchrony_only_features,
+    # synchrony of abdominal and chest movement
+    'eog': generic_features + synchrony_only_features  # synchrony of eyes
 }
 
 UNIQUE_CHANNELS = ['f3-m2', 'f4-m1', 'c3-m2', 'c4-m1', 'o1-m2',
@@ -101,15 +122,18 @@ FEATURES_TO_USE = [c for c in ALL_FEATURE_COLUMNS if
 
 VALID_STAGE_NAMES = list(STAGE_MAP.values()) + ["All"]
 
+
 def get_master_feature_names(category_lookup):
-    MASTER_FEATURE_NAMES = [
-        f"{cat}_{ch}_{stage}_{feat}"
-        for cat in valid_features.keys()
-        for ch in UNIQUE_CHANNELS if cat==category_lookup(ch)
-        for stage in VALID_STAGE_NAMES
-        for feat in valid_features.get(cat,[])
-    ]
+    MASTER_FEATURE_NAMES = []
+    for ch in UNIQUE_CHANNELS:
+        cat = category_lookup.get(ch)
+        if cat in valid_features:
+            for stage in VALID_STAGE_NAMES:
+                for feat in valid_features[cat]:
+                    MASTER_FEATURE_NAMES.append(f"{cat}_{ch}_{stage}_{feat}")
+
     return MASTER_FEATURE_NAMES
+
 
 # 3.1 helper functions-------------------------------------
 def inspect_raw(raw, label):
@@ -229,10 +253,11 @@ def powerline_ratio(Pxx, f, line_freq=50, bandwidth=1):
     total_power = np.trapezoid(Pxx, f)
     return line_power / total_power if total_power > 0 else 0
 
+
 # 3.5 Cross channel synchrony helper functions------------------------------------
 def peak_lag(x, y, fs):
-    peaks_x,_ = find_peaks(x, distance=fs*1)
-    peaks_y,_ = find_peaks(y, distance=fs*1)
+    peaks_x, _ = find_peaks(x, distance=fs * 1)
+    peaks_y, _ = find_peaks(y, distance=fs * 1)
     if len(peaks_x) == 0 or len(peaks_y) == 0:
         return np.nan
     lags = []
@@ -241,10 +266,12 @@ def peak_lag(x, y, fs):
         lags.append((nearest - px) / fs)
     return np.mean(lags)
 
+
 def crosscorr_lag(x, y, fs):
     corr = correlate(x - np.mean(x), y - np.mean(y), mode="full")
     lag_samples = np.argmax(corr) - (len(x) - 1)
     return lag_samples / fs
+
 
 def phase_locking(x, y):
     hx = hilbert(x)
@@ -252,17 +279,19 @@ def phase_locking(x, y):
     phase_x = np.angle(hx)
     phase_y = np.angle(hy)
     phase_diff = phase_x - phase_y
-    return np.abs(np.mean(np.exp(1j*phase_diff)))
+    return np.abs(np.mean(np.exp(1j * phase_diff)))
+
 
 def synchrony_features(chest, abd, fs):
-    r,_ = pearsonr(chest, abd)
+    r, _ = pearsonr(chest, abd)
     ccc = concordance_cc(chest, abd)
     lag = crosscorr_lag(chest, abd, fs)
     peak_delay = peak_lag(chest, abd, fs)
     amp_ratio = np.std(chest) / (np.std(abd) + 1e-8)
-    phase_lock=phase_locking(chest,abd)
-    return { "r": r, "ccc": ccc, "lag": lag, "peak_lag": peak_delay,
-             "amp_ratio": amp_ratio, "phase_lock":phase_lock}
+    phase_lock = phase_locking(chest, abd)
+    return {"r": r, "ccc": ccc, "lag": lag, "peak_lag": peak_delay,
+            "amp_ratio": amp_ratio, "phase_lock": phase_lock}
+
 
 def process_synchrony_pair(pair, raw_psg, STAGE_MAP, hypnogram):
     if not (pair[0] in raw_psg.ch_names and pair[1] in raw_psg.ch_names):
@@ -272,7 +301,7 @@ def process_synchrony_pair(pair, raw_psg, STAGE_MAP, hypnogram):
     left, _ = raw_psg[pair[0]]
     right, _ = raw_psg[pair[1]]
     left, right = left.ravel(), right.ravel()
-    
+
     # Align hypnogram
     hyp = np.repeat(hypnogram, int(fs * 30))
     min_len = min(len(left), len(right), len(hyp))
@@ -283,7 +312,7 @@ def process_synchrony_pair(pair, raw_psg, STAGE_MAP, hypnogram):
         mask = (hyp == stage_val)
         if np.sum(mask) < 5:
             continue
-            
+
         sync_feats = synchrony_features(left[mask], right[mask], fs)
         # We store these with metadata so we can merge them later
         pair_results.append({
@@ -292,6 +321,7 @@ def process_synchrony_pair(pair, raw_psg, STAGE_MAP, hypnogram):
             **sync_feats
         })
     return pair_results
+
 
 def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                      processed=True):
@@ -332,7 +362,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
     # Initialize row
     # print("Calculating generic features")
 
-    print(f"Generic feature calculation time: {time_2 - time_1}")
+    #print(f"Generic feature calculation time: {time_2 - time_1}")
 
     # -----------------------------
     # EEG-specific Features
@@ -340,13 +370,13 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
     if category == "eeg":
         # print("Calculating eeg features")
         time_3 = time.perf_counter()
-        #row_dict["sample_entropy"] = tsf.sample_entropy(data)
-        #row_dict["approx_entropy"] = tsf.approximate_entropy(data, m=2,r=2 * std_val)
-        #row_dict["perm_entropy"] = tsf.permutation_entropy(data)
-        #row_dict["lempel_ziv"] = tsf.lempel_ziv_complexity(data, bins=5)
-        #row_dict["time_rev_asym"] = tsf.time_reversal_asymmetry_statistic(data,lag=int(fs * 0.02))
+        # row_dict["sample_entropy"] = tsf.sample_entropy(data)
+        # row_dict["approx_entropy"] = tsf.approximate_entropy(data, m=2,r=2 * std_val)
+        # row_dict["perm_entropy"] = tsf.permutation_entropy(data)
+        # row_dict["lempel_ziv"] = tsf.lempel_ziv_complexity(data, bins=5)
+        # row_dict["time_rev_asym"] = tsf.time_reversal_asymmetry_statistic(data,lag=int(fs * 0.02))
         row_dict["num_peaks"] = tsf.number_peaks(data, n=5)
-        #row_dict["fourier_entropy"] = tsf.fourier_entropy(data, bins=10)
+        # row_dict["fourier_entropy"] = tsf.fourier_entropy(data, bins=10)
         # row_dict["rms"] = rms_amplitude(data)
         row_dict["rms"] = tsf.root_mean_square(data)
         row_dict["ptp"] = peak_to_peak(data)
@@ -364,7 +394,8 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
 
         for band_name, band_range in bands.items():
             bp = bandpower_from_psd(f, Pxx, band_range)
-            row_dict[f"rel_{band_name}"] = bp / total_power if total_power > 0 else 0
+            row_dict[
+                f"rel_{band_name}"] = bp / total_power if total_power > 0 else 0
 
         row_dict["delta_beta_ratio"] = (
                 row_dict["rel_delta"] / (row_dict["rel_beta"] + 1e-6)
@@ -510,8 +541,8 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                 row_dict["sw_spindle_delay_mean"] = 0
                 row_dict["sw_spindle_delay_std"] = 0
             time_4 = time.perf_counter()
-            print(f"EEG calculation time: {time_4 - time_3}")
-            print(f"Total calculation time: {time_4 - time_1}")
+            #print(f"EEG calculation time: {time_4 - time_3}")
+            #print(f"Total calculation time: {time_4 - time_1}")
 
         except Exception as e:
             print(f"EEG extraction error: {e}")
@@ -557,7 +588,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
         row_dict["cid_ce"] = tsf.cid_ce(data, normalize=True)
         row_dict["mean_2nd_deriv_central"] = tsf.mean_second_derivative_central(
             data)
-        #row_dict["sample_entropy"] = tsf.sample_entropy(data)
+        # row_dict["sample_entropy"] = tsf.sample_entropy(data)
 
         row_dict["rms"] = rms_amplitude(data)
         row_dict["ptp"] = peak_to_peak(data)
@@ -631,8 +662,8 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
             row_dict["LF_HF_RATIO"] = hrv_biomarker["LF_HF_RATIO"]
             # print("HRV feature calculations done")
             time_6 = time.perf_counter()
-            print(f"ECG claculation time: {time_6 - time_5}")
-            print(f"Total time: {time_6 - time_1}")
+            #print(f"ECG claculation time: {time_6 - time_5}")
+            #print(f"Total time: {time_6 - time_1}")
 
         except Exception as e:
             print(f"ECG extraction error: {e}")
@@ -674,12 +705,13 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
         row_dict["hf_ratio_signal"] = high_frequency_ratio(Pxx, f)
         row_dict["spec_peak_min_ratio"] = np.max(Pxx) / (np.min(Pxx) + 1e-12)
         row_dict["rms"] = tsf.root_mean_square(data)
-        row_dict["energy_ratio_chunks"] = tsf.energy_ratio_by_chunks(data,param=[{"num_segments": 10,
-                                                                                  "segment_focus": 5}])[0][1]
+        row_dict["energy_ratio_chunks"] = \
+        tsf.energy_ratio_by_chunks(data, param=[{"num_segments": 10,
+                                                 "segment_focus": 5}])[0][1]
         row_dict["num_peaks"] = tsf.number_peaks(data, n=3)
         time_8 = time.perf_counter()
-        print(f"EMG feature calculations time{time_8 - time_7}")
-        print(f"Total_time{time_8 - time_1}")
+        #print(f"EMG feature calculations time{time_8 - time_7}")
+        #print(f"Total_time{time_8 - time_1}")
     # -----------------------------
     # Respiratory Features
     # -----------------------------
@@ -703,19 +735,20 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
             peaks, info = nk.rsp_peaks(resp_cleaned, sampling_rate=fs)
 
             intervals = np.diff(peaks["RSP_Peaks"]) / fs
-            mean_int = np.mean(intervals) if len(intervals) >0 else 0
-            mean_rr = 60 / mean_int if (len(intervals) > 0 and mean_int != 0) else np.nan
+            mean_int = np.mean(intervals) if len(intervals) > 0 else 0
+            mean_rr = 60 / mean_int if (
+                        len(intervals) > 0 and mean_int != 0) else np.nan
             resp_var = np.std(intervals) if len(intervals) > 0 else np.nan
 
             row_dict["mean_resp_rate"] = mean_rr
             row_dict["resp_variability"] = resp_var
             row_dict["linear_trend"] = \
-            tsf.linear_trend(data, param=[{"attr": "slope"}])[0][1]
-            #row_dict["approx_entropy"] = tsf.approximate_entropy(data, m=2,r=2 * std_val)
+                tsf.linear_trend(data, param=[{"attr": "slope"}])[0][1]
+            # row_dict["approx_entropy"] = tsf.approximate_entropy(data, m=2,r=2 * std_val)
             # currently problematic due to using an old scipy version
             time_10 = time.perf_counter()
-            print(f"Respiratory feature calculations time:{time_10 - time_9}")
-            print(f"Total time: {time_10 - time_1}")
+            #print(f"Respiratory feature calculations time:{time_10 - time_9}")
+            #print(f"Total time: {time_10 - time_1}")
             '''
             if ch_name == "spo2":
                 print("Calculating spo2 features")
@@ -748,7 +781,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
             row_dict["mean_resp_rate"] = np.nan
             row_dict["resp_variability"] = np.nan
             row_dict["linear_trend"] = np.nan
-            #row_dict["approx_entropy"] = np.nan
+            # row_dict["approx_entropy"] = np.nan
             '''
             for col in [
                 "AV", "MED", "Min", "SD", "RG", "P",
@@ -822,8 +855,9 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,
     return stage_results
 
 
-def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,processed=True):
-    results = Parallel(n_jobs=-2, prefer="threads")(
+def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,
+                          processed=True):
+    results = Parallel(n_jobs=2, prefer="threads")(
         delayed(process_channel)(
             ch, raw_psg, category_lookup, hypnogram, processed
         )
@@ -834,7 +868,7 @@ def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,processed=Tru
     for r in results:
         if r:
             flattened.extend(r)
-    flattened=pd.DataFrame(flattened)#I MADE A FUCKING TYPO? IT'S DataFrame not Dataframe
+    flattened = pd.DataFrame(flattened)
 
     if hypnogram is not None:
         synchron_pairs = [
@@ -842,41 +876,46 @@ def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,processed=Tru
             ["f3-m2", "f4-m1"], ["c3", "c4"], ["c3-m2", "c4-m1"], ["o1", "o2"],
             ["o1-m2", "o2-m1"], ["rleg+", "lleg+"], ["rleg-", "lleg-"]
         ]
-        
+
         sync_results = Parallel(n_jobs=-2, prefer="threads")(
             delayed(process_synchrony_pair)(pair, raw_psg, STAGE_MAP, hypnogram)
             for pair in synchron_pairs
         )
-        
-        sync_flattened = [item for sublist in sync_results if sublist for item in sublist]
-        
+
+        sync_flattened = [item for sublist in sync_results if sublist for item
+                          in sublist]
+
         if sync_flattened:
             # Map synchrony results back to the main dataframe
             for res in sync_flattened:
                 p1, p2 = res['pair']
                 stage = res['stage']
-                feats = {k: v for k, v in res.items() if k not in ['pair', 'stage']}
-                
+                feats = {k: v for k, v in res.items() if
+                         k not in ['pair', 'stage']}
+
                 # Update rows where channel is part of the pair AND stage matches
-                mask = (flattened['stage'] == stage) & (flattened['channel'].isin([p1, p2]))
+                mask = (flattened['stage'] == stage) & (
+                    flattened['channel'].isin([p1, p2]))
                 for col, val in feats.items():
                     flattened.loc[mask, col] = val
-                    
 
     return flattened
 
 
 def stratified_pca_feature_selection(df, y, params):
-
     base_meta_cols = ['BMI', 'Age', 'Race_Asian', 'Race_Black',
-                      'Race_Others','Race_Unavailable',
-                      'Race_White','Sex_Female','Sex_Male']
-    base_annotation_cols=["Ahi_auto","Ar_auto","Limb_auto","W_pct","N1_pct","N2_pct","N3_pct","R_pct","efficiency","W_prob","N3_prob","Ar_prob"]
+                      'Race_Others', 'Race_Unavailable',
+                      'Race_White', 'Sex_Female', 'Sex_Male']
+    base_annotation_cols = ["Ahi_auto", "Ar_auto", "Limb_auto", "W_pct",
+                            "N1_pct", "N2_pct", "N3_pct", "R_pct", "efficiency",
+                            "W_prob", "N3_prob", "Ar_prob"]
 
-    categories = ['ecg','eeg','eog','emg','resp']
-    stages = ["N1","N2","N3","Wake","REM"]
+    categories = ['ecg', 'eeg', 'eog', 'emg', 'resp']
+    stages = ["N1", "N2", "N3", "Wake", "REM"]
 
     groups = df["subject"]
+    print(groups)
+    groups
 
     gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
     train_idx, test_idx = next(gss.split(df, y, groups))
@@ -885,51 +924,56 @@ def stratified_pca_feature_selection(df, y, params):
     train_df = df.iloc[train_idx]
     test_df = df.iloc[test_idx]
 
-    X_train = train_df.drop(columns=["Cognitive_Impairment","subject","session"])
-    X_test = test_df.drop(columns=["Cognitive_Impairment","subject","session"])
+    X_train = train_df.drop(
+        columns=["Cognitive_Impairment", "subject", "session"])
+    X_test = test_df.drop(
+        columns=["Cognitive_Impairment", "subject", "session"])
 
     y_train = y.iloc[train_idx]
     y_test = y.iloc[test_idx]
 
     results = []
 
-    component_nums=[10,20,30,40,50,100,200,250,300,400,500,750]
-    limits=[1,2,4,6,16,17,20,25,26,29,61,129,202,265,334,451,461,567,597,599]
-    
+    component_nums = [10, 20, 30, 40, 50, 100, 200, 250, 300, 400, 500, 750]
+    limits = [1, 2, 4, 6, 16, 17, 20, 25, 26, 29, 61, 129, 202, 265, 334, 451,
+              461, 567, 597, 599]
+
     strata_list = []
     for cat in categories:
-        strata_list.append(('category',cat))
+        strata_list.append(('category', cat))
     for stg in stages:
-        strata_list.append(('stage',stg))
+        strata_list.append(('stage', stg))
     for cat in categories:
         for stg in stages:
-            strata_list.append(('both',(cat,stg)))
+            strata_list.append(('both', (cat, stg)))
 
-    for type,val in strata_list:
+    for type, val in strata_list:
 
-        if type=='category':
-            cols=[c for c in X_train.columns if val in c.lower()]
+        if type == 'category':
+            cols = [c for c in X_train.columns if val in c.lower()]
 
-        elif type=='stage':
-            cols=[c for c in X_train.columns if val in c]
+        elif type == 'stage':
+            cols = [c for c in X_train.columns if val in c]
 
         else:
-            cat,stg=val
-            cols=[c for c in X_train.columns if cat in c.lower() and stg in c]
+            cat, stg = val
+            cols = [c for c in X_train.columns if cat in c.lower() and stg in c]
 
-        if len(cols)==0:
+        if len(cols) == 0:
             continue
 
-        cols = [c for c in (cols + base_meta_cols + base_annotation_cols) if c in X_train.columns]
+        cols = [c for c in (cols + base_meta_cols + base_annotation_cols) if
+                c in X_train.columns]
 
         X_tr_sub = X_train[cols]
         X_te_sub = X_test[cols]
 
-        strata_model = XGBClassifier(**params,enable_categorical=True, tree_method="hist",random_state=42)
+        strata_model = XGBClassifier(**params, enable_categorical=True,
+                                     tree_method="hist", random_state=42)
         strata_model.fit(X_tr_sub, y_train)
 
-        #probs = strata_model.predict_proba(X_te_sub)[:,1]
-        #auc = metrics.roc_auc_score(y_test, probs)
+        # probs = strata_model.predict_proba(X_te_sub)[:,1]
+        # auc = metrics.roc_auc_score(y_test, probs)
 
         aucs = []
 
@@ -938,28 +982,30 @@ def stratified_pca_feature_selection(df, y, params):
             X_val_fold = X_tr_sub.iloc[val_idx]
             y_tr_fold = y.iloc[tr_idx]
             y_val_fold = y.iloc[val_idx]
-        
+
             strata_model.fit(X_tr_fold, y_tr_fold)
-            probs = strata_model.predict_proba(X_val_fold)[:,1]
+            probs = strata_model.predict_proba(X_val_fold)[:, 1]
             aucs.append(metrics.roc_auc_score(y_val_fold, probs))
-        
+
         auc = np.mean(aucs)
-        
-        results.append((cols,strata_model.feature_importances_,auc))
 
-        best_auc=auc
-        best_tr_subset=X_tr_sub
-        best_te_subset=X_te_sub
+        results.append((cols, strata_model.feature_importances_, auc))
 
-        for limit in limits:#pre filtering using NaN counts
+        best_auc = auc
+        best_tr_subset = X_tr_sub
+        best_te_subset = X_te_sub
+
+        for limit in limits:  # pre filtering using NaN counts
             if limit > len(X_tr_sub):
                 continue
             X_tr_filt = X_tr_sub.dropna(thresh=limit, axis=1)
             X_te_filt = X_te_sub[X_tr_filt.keys()]
-            filter_model = XGBClassifier(**params, random_state=42,enable_categorical=True,tree_method="hist")
-            #filter_model.fit(X_tr_filt, y_train)
-            #probs = filter_model.predict_proba(X_te_filt)[:, 1]
-            #auc = metrics.roc_auc_score(y_test, probs)
+            filter_model = XGBClassifier(**params, random_state=42,
+                                         enable_categorical=True,
+                                         tree_method="hist")
+            # filter_model.fit(X_tr_filt, y_train)
+            # probs = filter_model.predict_proba(X_te_filt)[:, 1]
+            # auc = metrics.roc_auc_score(y_test, probs)
 
             aucs = []
 
@@ -968,25 +1014,26 @@ def stratified_pca_feature_selection(df, y, params):
                 X_val_fold = X_tr_filt.iloc[val_idx]
                 y_tr_fold = y.iloc[tr_idx]
                 y_val_fold = y.iloc[val_idx]
-            
+
                 filter_model.fit(X_tr_fold, y_tr_fold)
-                probs = filter_model.predict_proba(X_val_fold)[:,1]
+                probs = filter_model.predict_proba(X_val_fold)[:, 1]
                 aucs.append(metrics.roc_auc_score(y_val_fold, probs))
-            
+
             auc = np.mean(aucs)
-            
-            results.append((X_tr_filt.keys(),filter_model.feature_importances_,auc))
-            if best_auc<auc:
-                best_auc=auc
-                best_tr_subset=X_tr_filt
-                best_te_subest=X_te_filt
+
+            results.append(
+                (X_tr_filt.keys(), filter_model.feature_importances_, auc))
+            if best_auc < auc:
+                best_auc = auc
+                best_tr_subset = X_tr_filt
+                best_te_subest = X_te_filt
         # PCA and RFE versions
         for comp in component_nums:
 
-            if best_tr_subset.shape[1]<comp:
+            if best_tr_subset.shape[1] < comp:
                 continue
 
-            imputer = SimpleImputer(strategy='median',add_indicator=True)
+            imputer = SimpleImputer(strategy='median', add_indicator=True)
             scaler = StandardScaler()
             pca = PCA(n_components=comp, random_state=42)
 
@@ -999,18 +1046,21 @@ def stratified_pca_feature_selection(df, y, params):
             if comp > max_possible_components:
                 continue
 
-            corr_matrix=best_tr_subset.corr().abs()
-            avg_corr=np.nanmean(corr_matrix.values[np.triu_indices_from(corr_matrix,k=1)])
+            corr_matrix = best_tr_subset.corr().abs()
+            avg_corr = np.nanmean(
+                corr_matrix.values[np.triu_indices_from(corr_matrix, k=1)])
 
-            if avg_corr>0.6 or type=="stage" or val=="resp":
-                #PCA because stages and respiratory data are multimodal 
+            if avg_corr > 0.6 or type == "stage" or val == "resp":
+                # PCA because stages and respiratory data are multimodal
                 X_tr_pca = pca.fit_transform(X_tr)
                 X_te_pca = pca.transform(X_te)
-    
-                pca_model = XGBClassifier(**params, tree_method="hist",enable_categorical=True,random_state=42)
-                #pca_model.fit(X_tr_pca, y_train)
-                #probs = pca_model.predict_proba(X_te_pca)[:,1]
-                #auc = metrics.roc_auc_score(y_test, probs)
+
+                pca_model = XGBClassifier(**params, tree_method="hist",
+                                          enable_categorical=True,
+                                          random_state=42)
+                # pca_model.fit(X_tr_pca, y_train)
+                # probs = pca_model.predict_proba(X_te_pca)[:,1]
+                # auc = metrics.roc_auc_score(y_test, probs)
 
                 aucs = []
 
@@ -1019,24 +1069,30 @@ def stratified_pca_feature_selection(df, y, params):
                     X_val_fold = X_tr_pca.iloc[val_idx]
                     y_tr_fold = y.iloc[tr_idx]
                     y_val_fold = y.iloc[val_idx]
-                
+
                     pca_model.fit(X_tr_fold, y_tr_fold)
-                    probs = pca_model.predict_proba(X_val_fold)[:,1]
+                    probs = pca_model.predict_proba(X_val_fold)[:, 1]
                     aucs.append(metrics.roc_auc_score(y_val_fold, probs))
-                
+
                 auc = np.mean(aucs)
-                
+
                 loadings = np.abs(pca.components_)
-                weighted_loadings = np.dot(pca_model.feature_importances_, loadings)
-    
-                results.append((best_tr_subset.columns.tolist(),weighted_loadings,auc))
+                weighted_loadings = np.dot(pca_model.feature_importances_,
+                                           loadings)
+
+                results.append(
+                    (best_tr_subset.columns.tolist(), weighted_loadings, auc))
             else:
-                #RFE, because in our experiences gave better results on data of singular modality
-                step_size=max(1,int((len(best_tr_subset.columns)-comp)/10))#Recursion is very slow on high dimensional data
-                RFE_model=RFE(XGBClassifier(**params, tree_method="hist",enable_categorical=True,random_state=42), n_features_to_select=comp,step=step_size)
-                #RFE_model.fit(X_tr, y_train)
-                #probs = RFE_model.predict_proba(X_te)[:, 1]
-                #auc = metrics.roc_auc_score(y_test, probs)
+                # RFE, because in our experiences gave better results on data of singular modality
+                step_size = max(1, int((
+                                                   len(best_tr_subset.columns) - comp) / 10))  # Recursion is very slow on high dimensional data
+                RFE_model = RFE(XGBClassifier(**params, tree_method="hist",
+                                              enable_categorical=True,
+                                              random_state=42),
+                                n_features_to_select=comp, step=step_size)
+                # RFE_model.fit(X_tr, y_train)
+                # probs = RFE_model.predict_proba(X_te)[:, 1]
+                # auc = metrics.roc_auc_score(y_test, probs)
                 aucs = []
 
                 for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups):
@@ -1044,33 +1100,35 @@ def stratified_pca_feature_selection(df, y, params):
                     X_val_fold = X_tr.iloc[val_idx]
                     y_tr_fold = y.iloc[tr_idx]
                     y_val_fold = y.iloc[val_idx]
-                
+
                     RFE_model.fit(X_tr_fold, y_tr_fold)
-                    probs = RFE_model.predict_proba(X_val_fold)[:,1]
+                    probs = RFE_model.predict_proba(X_val_fold)[:, 1]
                     aucs.append(metrics.roc_auc_score(y_val_fold, probs))
-                
+
                 auc = np.mean(aucs)
 
                 selected_mask = RFE_model.support_
-                selected_features = best_tr_subset.columns[selected_mask].tolist()
-                
-                results.append((best_tr_subset.columns.tolist(),RFE_model.estimator_.feature_importances_,auc))
+                selected_features = best_tr_subset.columns[
+                    selected_mask].tolist()
+
+                results.append((best_tr_subset.columns.tolist(),
+                                RFE_model.estimator_.feature_importances_, auc))
 
     # accumulate global weights
-    feature_weights={}
+    feature_weights = {}
 
-    for cols,weights,auc in results:
+    for cols, weights, auc in results:
 
-        if auc<0.53:
+        if auc < 0.53:
             continue
 
-        for f,w in zip(cols,weights):
-            feature_weights[f]=feature_weights.get(f,0)+w*auc
+        for f, w in zip(cols, weights):
+            feature_weights[f] = feature_weights.get(f, 0) + w * auc
 
-    sorted_features=sorted(feature_weights.items(),
-                           key=lambda x:x[1],
-                           reverse=True)
+    sorted_features = sorted(feature_weights.items(),
+                             key=lambda x: x[1],
+                             reverse=True)
 
-    ranked=[f[0] for f in sorted_features]
+    ranked = [f[0] for f in sorted_features]
 
     return ranked
