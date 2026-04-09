@@ -834,7 +834,7 @@ def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,processed=Tru
     for r in results:
         if r:
             flattened.extend(r)
-    flattened=pd.Dataframe(flattened)
+    flattened=pd.DataFrame(flattened)#I MADE A FUCKING TYPO? IT'S DataFrame not Dataframe
 
     if hypnogram is not None:
         synchron_pairs = [
@@ -939,8 +939,8 @@ def stratified_pca_feature_selection(df, y, params):
             y_tr_fold = y.iloc[tr_idx]
             y_val_fold = y.iloc[val_idx]
         
-            model.fit(X_tr_fold, y_tr_fold)
-            probs = model.predict_proba(X_val_fold)[:,1]
+            strata_model.fit(X_tr_fold, y_tr_fold)
+            probs = strata_model.predict_proba(X_val_fold)[:,1]
             aucs.append(metrics.roc_auc_score(y_val_fold, probs))
         
         auc = np.mean(aucs)
@@ -969,7 +969,7 @@ def stratified_pca_feature_selection(df, y, params):
                 y_tr_fold = y.iloc[tr_idx]
                 y_val_fold = y.iloc[val_idx]
             
-                model.fit(X_tr_fold, y_tr_fold)
+                filter_model.fit(X_tr_fold, y_tr_fold)
                 probs = filter_model.predict_proba(X_val_fold)[:,1]
                 aucs.append(metrics.roc_auc_score(y_val_fold, probs))
             
@@ -1045,8 +1045,8 @@ def stratified_pca_feature_selection(df, y, params):
                     y_tr_fold = y.iloc[tr_idx]
                     y_val_fold = y.iloc[val_idx]
                 
-                    model.fit(X_tr_fold, y_tr_fold)
-                    probs = model.predict_proba(X_val_fold)[:,1]
+                    RFE_model.fit(X_tr_fold, y_tr_fold)
+                    probs = RFE_model.predict_proba(X_val_fold)[:,1]
                     aucs.append(metrics.roc_auc_score(y_val_fold, probs))
                 
                 auc = np.mean(aucs)
