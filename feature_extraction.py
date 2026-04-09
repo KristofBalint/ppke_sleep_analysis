@@ -976,7 +976,7 @@ def stratified_pca_feature_selection(df, y, params):
 
         aucs = []
 
-        for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups[train_idx]):
+        for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
             X_tr_fold = X_tr_sub.iloc[tr_idx]
             X_val_fold = X_tr_sub.iloc[val_idx]
             y_tr_fold = y.iloc[tr_idx]
@@ -1008,7 +1008,7 @@ def stratified_pca_feature_selection(df, y, params):
 
             aucs = []
 
-            for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups[train_idx]):
+            for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
                 X_tr_fold = X_tr_filt.iloc[tr_idx]
                 X_val_fold = X_tr_filt.iloc[val_idx]
                 y_tr_fold = y.iloc[tr_idx]
@@ -1063,7 +1063,7 @@ def stratified_pca_feature_selection(df, y, params):
 
                 aucs = []
 
-                for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups[train_idx]):
+                for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
                     X_tr_fold = X_tr_pca.iloc[tr_idx]
                     X_val_fold = X_tr_pca.iloc[val_idx]
                     y_tr_fold = y.iloc[tr_idx]
@@ -1083,8 +1083,7 @@ def stratified_pca_feature_selection(df, y, params):
                     (best_tr_subset.columns.tolist(), weighted_loadings, auc))
             else:
                 # RFE, because in our experiences gave better results on data of singular modality
-                step_size = max(1, int((
-                                                   len(best_tr_subset.columns) - comp) / 10))  # Recursion is very slow on high dimensional data
+                step_size = max(1, int((len(best_tr_subset.columns) - comp) / 10))  # Recursion is very slow on high dimensional data
                 RFE_model = RFE(XGBClassifier(**params, tree_method="hist",
                                               enable_categorical=True,
                                               random_state=42),
@@ -1094,7 +1093,7 @@ def stratified_pca_feature_selection(df, y, params):
                 # auc = metrics.roc_auc_score(y_test, probs)
                 aucs = []
 
-                for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups[train_idx]):
+                for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
                     X_tr_fold = X_tr.iloc[tr_idx]
                     X_val_fold = X_tr.iloc[val_idx]
                     y_tr_fold = y.iloc[tr_idx]
@@ -1107,8 +1106,7 @@ def stratified_pca_feature_selection(df, y, params):
                 auc = np.mean(aucs)
 
                 selected_mask = RFE_model.support_
-                selected_features = best_tr_subset.columns[
-                    selected_mask].tolist()
+                selected_features = best_tr_subset.columns[selected_mask].tolist()
 
                 results.append((best_tr_subset.columns.tolist(),
                                 RFE_model.estimator_.feature_importances_, auc))
