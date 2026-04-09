@@ -835,7 +835,7 @@ def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,processed=Tru
             flattened.extend(r)
     flattened=pd.Dataframe(flattened)
 
-   if hypnogram is not None:
+    if hypnogram is not None:
         synchron_pairs = [
             ["chest", "abd"], ["e1", "e2"], ["e1-m2", "e2-m1"], ["f3", "f4"],
             ["f3-m2", "f4-m1"], ["c3", "c4"], ["c3-m2", "c4-m1"], ["o1", "o2"],
