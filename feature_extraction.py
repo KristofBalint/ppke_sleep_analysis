@@ -915,7 +915,6 @@ def stratified_pca_feature_selection(df, y, params):
 
     groups = df["subject"]
     print(groups)
-    groups
 
     gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
     train_idx, test_idx = next(gss.split(df, y, groups))
@@ -977,7 +976,7 @@ def stratified_pca_feature_selection(df, y, params):
 
         aucs = []
 
-        for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups):
+        for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups[train_idx]):
             X_tr_fold = X_tr_sub.iloc[tr_idx]
             X_val_fold = X_tr_sub.iloc[val_idx]
             y_tr_fold = y.iloc[tr_idx]
@@ -1009,7 +1008,7 @@ def stratified_pca_feature_selection(df, y, params):
 
             aucs = []
 
-            for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups):
+            for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups[train_idx]):
                 X_tr_fold = X_tr_filt.iloc[tr_idx]
                 X_val_fold = X_tr_filt.iloc[val_idx]
                 y_tr_fold = y.iloc[tr_idx]
@@ -1064,7 +1063,7 @@ def stratified_pca_feature_selection(df, y, params):
 
                 aucs = []
 
-                for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups):
+                for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups[train_idx]):
                     X_tr_fold = X_tr_pca.iloc[tr_idx]
                     X_val_fold = X_tr_pca.iloc[val_idx]
                     y_tr_fold = y.iloc[tr_idx]
@@ -1095,7 +1094,7 @@ def stratified_pca_feature_selection(df, y, params):
                 # auc = metrics.roc_auc_score(y_test, probs)
                 aucs = []
 
-                for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups):
+                for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups[train_idx]):
                     X_tr_fold = X_tr.iloc[tr_idx]
                     X_val_fold = X_tr.iloc[val_idx]
                     y_tr_fold = y.iloc[tr_idx]
