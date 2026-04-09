@@ -19,10 +19,11 @@ from utils import unfuck_old
 from tsfresh.feature_extraction import feature_calculators as tsf
 import time
 from xgboost import XGBClassifier
+from sklearn.feature_selection import RFE
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.model_selection import GroupShuffleSplit, GroupKFold
 from sklearn import metrics
 
 unfuck_old()
@@ -879,6 +880,7 @@ def stratified_pca_feature_selection(df, y, params):
 
     gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
     train_idx, test_idx = next(gss.split(df, y, groups))
+    gkf = GroupKFold(n_splits=5)
 
     train_df = df.iloc[train_idx]
     test_df = df.iloc[test_idx]
@@ -891,6 +893,9 @@ def stratified_pca_feature_selection(df, y, params):
 
     results = []
 
+    component_nums=[10,20,30,40,50,100,200,250,300,400,500,750]
+    limits=[1,2,4,6,16,17,20,25,26,29,61,129,202,265,334,451,461,567,597,599]
+    
     strata_list = []
     for cat in categories:
         strata_list.append(('category',cat))
@@ -915,47 +920,141 @@ def stratified_pca_feature_selection(df, y, params):
         if len(cols)==0:
             continue
 
-        cols = cols + base_meta_cols + base_annotation_cols
+        cols = [c for c in (cols + base_meta_cols + base_annotation_cols) if c in X_train.columns]
 
         X_tr_sub = X_train[cols]
         X_te_sub = X_test[cols]
 
-        model = XGBClassifier(**params, tree_method="hist")
-        model.fit(X_tr_sub, y_train)
+        strata_model = XGBClassifier(**params,enable_categorical=True, tree_method="hist",random_state=42)
+        strata_model.fit(X_tr_sub, y_train)
 
-        probs = model.predict_proba(X_te_sub)[:,1]
-        auc = metrics.roc_auc_score(y_test, probs)
+        #probs = strata_model.predict_proba(X_te_sub)[:,1]
+        #auc = metrics.roc_auc_score(y_test, probs)
 
-        results.append((cols,model.feature_importances_,auc))
+        aucs = []
 
-        # PCA versions
-        component_nums=[10,20,30,40,50,100,200,250,300,400,500,750,1000,1500]
+        for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups):
+            X_tr_fold = X_tr_sub.iloc[tr_idx]
+            X_val_fold = X_tr_sub.iloc[val_idx]
+            y_tr_fold = y.iloc[tr_idx]
+            y_val_fold = y.iloc[val_idx]
+        
+            model.fit(X_tr_fold, y_tr_fold)
+            probs = model.predict_proba(X_val_fold)[:,1]
+            aucs.append(metrics.roc_auc_score(y_val_fold, probs))
+        
+        auc = np.mean(aucs)
+        
+        results.append((cols,strata_model.feature_importances_,auc))
 
+        best_auc=auc
+        best_tr_subset=X_tr_sub
+        best_te_subset=X_te_sub
+
+        for limit in limits:#pre filtering using NaN counts
+            if limit > len(X_tr_sub):
+                continue
+            X_tr_filt = X_tr_sub.dropna(thresh=limit, axis=1)
+            X_te_filt = X_te_sub[X_tr_filt.keys()]
+            filter_model = XGBClassifier(**params, random_state=42,enable_categorical=True,tree_method="hist")
+            #filter_model.fit(X_tr_filt, y_train)
+            #probs = filter_model.predict_proba(X_te_filt)[:, 1]
+            #auc = metrics.roc_auc_score(y_test, probs)
+
+            aucs = []
+
+            for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups):
+                X_tr_fold = X_tr_filt.iloc[tr_idx]
+                X_val_fold = X_tr_filt.iloc[val_idx]
+                y_tr_fold = y.iloc[tr_idx]
+                y_val_fold = y.iloc[val_idx]
+            
+                model.fit(X_tr_fold, y_tr_fold)
+                probs = filter_model.predict_proba(X_val_fold)[:,1]
+                aucs.append(metrics.roc_auc_score(y_val_fold, probs))
+            
+            auc = np.mean(aucs)
+            
+            results.append((X_tr_filt.keys(),filter_model.feature_importances_,auc))
+            if best_auc<auc:
+                best_auc=auc
+                best_tr_subset=X_tr_filt
+                best_te_subest=X_te_filt
+        # PCA and RFE versions
         for comp in component_nums:
 
-            if len(cols)<comp:
+            if best_tr_subset.shape[1]<comp:
                 continue
 
-            imputer = SimpleImputer(strategy='median')
+            imputer = SimpleImputer(strategy='median',add_indicator=True)
             scaler = StandardScaler()
             pca = PCA(n_components=comp, random_state=42)
 
-            X_tr = scaler.fit_transform(imputer.fit_transform(X_tr_sub))
-            X_te = scaler.transform(imputer.transform(X_te_sub))
+            X_tr = scaler.fit_transform(imputer.fit_transform(best_tr_subset))
+            X_te = scaler.transform(imputer.transform(best_te_subset))
 
-            X_tr_pca = pca.fit_transform(X_tr)
-            X_te_pca = pca.transform(X_te)
+            n_samples, n_features = X_tr.shape
+            max_possible_components = min(n_samples, n_features)
 
-            pca_model = XGBClassifier(**params, tree_method="hist")
-            pca_model.fit(X_tr_pca, y_train)
+            if comp > max_possible_components:
+                continue
 
-            probs = pca_model.predict_proba(X_te_pca)[:,1]
-            auc = metrics.roc_auc_score(y_test, probs)
+            corr_matrix=best_tr_subset.corr().abs()
+            avg_corr=np.nanmean(corr_matrix.values[np.triu_indices_from(corr_matrix,k=1)])
 
-            loadings = np.abs(pca.components_)
-            weighted_loadings = np.dot(pca_model.feature_importances_, loadings)
+            if avg_corr>0.6 or type=="stage" or val=="resp":
+                #PCA because stages and respiratory data are multimodal 
+                X_tr_pca = pca.fit_transform(X_tr)
+                X_te_pca = pca.transform(X_te)
+    
+                pca_model = XGBClassifier(**params, tree_method="hist",enable_categorical=True,random_state=42)
+                #pca_model.fit(X_tr_pca, y_train)
+                #probs = pca_model.predict_proba(X_te_pca)[:,1]
+                #auc = metrics.roc_auc_score(y_test, probs)
 
-            results.append((cols,weighted_loadings,auc))
+                aucs = []
+
+                for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups):
+                    X_tr_fold = X_tr_pca.iloc[tr_idx]
+                    X_val_fold = X_tr_pca.iloc[val_idx]
+                    y_tr_fold = y.iloc[tr_idx]
+                    y_val_fold = y.iloc[val_idx]
+                
+                    pca_model.fit(X_tr_fold, y_tr_fold)
+                    probs = pca_model.predict_proba(X_val_fold)[:,1]
+                    aucs.append(metrics.roc_auc_score(y_val_fold, probs))
+                
+                auc = np.mean(aucs)
+                
+                loadings = np.abs(pca.components_)
+                weighted_loadings = np.dot(pca_model.feature_importances_, loadings)
+    
+                results.append((best_tr_subset.columns.tolist(),weighted_loadings,auc))
+            else:
+                #RFE, because in our experiences gave better results on data of singular modality
+                step_size=max(1,int((len(best_tr_subset.columns)-comp)/10))#Recursion is very slow on high dimensional data
+                RFE_model=RFE(XGBClassifier(**params, tree_method="hist",enable_categorical=True,random_state=42), n_features_to_select=comp,step=step_size)
+                #RFE_model.fit(X_tr, y_train)
+                #probs = RFE_model.predict_proba(X_te)[:, 1]
+                #auc = metrics.roc_auc_score(y_test, probs)
+                aucs = []
+
+                for tr_idx, val_idx in gkf.split(X_tr_sub, y, groups):
+                    X_tr_fold = X_tr.iloc[tr_idx]
+                    X_val_fold = X_tr.iloc[val_idx]
+                    y_tr_fold = y.iloc[tr_idx]
+                    y_val_fold = y.iloc[val_idx]
+                
+                    model.fit(X_tr_fold, y_tr_fold)
+                    probs = model.predict_proba(X_val_fold)[:,1]
+                    aucs.append(metrics.roc_auc_score(y_val_fold, probs))
+                
+                auc = np.mean(aucs)
+
+                selected_mask = RFE_model.support_
+                selected_features = best_tr_subset.columns[selected_mask].tolist()
+                
+                results.append((best_tr_subset.columns.tolist(),RFE_model.estimator_.feature_importances_,auc))
 
     # accumulate global weights
     feature_weights={}
