@@ -24,6 +24,7 @@ from feature_extraction import assess_signal_quality, ALL_FEATURE_COLUMNS, \
 import mne
 from xgboost import XGBClassifier
 from sklearn import metrics
+import traceback
 
 ################################################################################
 # Path & Constant Configuration (Added for Robustness)
@@ -124,7 +125,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             physiological_features = extract_physiological_features(
                 physiological_data, physiological_fs,
                 csv_path=csv_path, category_lookup=category_lookup,
-                hypnogram=hypno)  # This function can rename, re-reference, resample, etc. the signal data.
+                hypnogram=hypno,patient_id=patient_id,session_id=session_id)  # This function can rename, re-reference, resample, etc. the signal data.
 
             # Load the human annotations; these data will not be available in the hidden validation and test sets.
             human_annotations_file = os.path.join(data_folder,
@@ -180,8 +181,9 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
         except Exception as e:
             # If an error occurs (e.g., a record is corrupted), log it and move to the next
-            tqdm.write(
-                f"  !!! Error processing record {i + 1} ({patient_id}): {e}")
+            error_stack=traceback.format_exc()
+            tqdm.write(f"  !!! Error processing record {i + 1} ({patient_id}): {e}")
+            tqdm.write(error_stack)
             continue
 
     pbar.close()
@@ -306,7 +308,7 @@ def run_model(model, record, data_folder, verbose):
         # Ensure csv_path is accessible or defined
         physiological_features = extract_physiological_features(phys_data,
                                                                 phys_fs,
-                                                                hypnogram=hypno)
+                                                                hypnogram=hypno,patient_id=patient_id,session_id=session_id)
     else:
         # Fallback to zeros if file is missing (length 49 in original code)
         # physiological_features = np.zeros(49)
@@ -403,7 +405,7 @@ def extract_demographic_features(data):
 def extract_physiological_features(physiological_data, physiological_fs,
                                    csv_path=DEFAULT_CSV_PATH,
                                    category_lookup=get_category_map(DEFAULT_CSV_PATH),
-                                   hypnogram=None):
+                                   hypnogram=None,patient_id="Unknown",session_id="Unknown"):
     """
     Standardizes channels and extracts statistical/spectral features.
     """
@@ -440,6 +442,8 @@ def extract_physiological_features(physiological_data, physiological_fs,
     raw_psg = FakeRaw(processed_channels, physiological_fs)
     quality_df = assess_signal_quality(raw_psg, category_lookup,
                                        hypnogram=hypnogram)
+    quality_df["subject"]=patient_id
+    quality_df["session"]=session_id
     print(f"Shape originally {quality_df.shape}")
     quality_df = quality_df.reindex(columns=ALL_FEATURE_COLUMNS)
     if 'subject' not in quality_df.columns:
