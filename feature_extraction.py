@@ -914,7 +914,6 @@ def stratified_pca_feature_selection(df, y, params):
     stages = ["N1", "N2", "N3", "Wake", "REM"]
 
     groups = df["subject"]
-    print(groups)
 
     gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
     train_idx, test_idx = next(gss.split(df, y, groups))
@@ -979,8 +978,8 @@ def stratified_pca_feature_selection(df, y, params):
         for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
             X_tr_fold = X_tr_sub.iloc[tr_idx]
             X_val_fold = X_tr_sub.iloc[val_idx]
-            y_tr_fold = y.iloc[tr_idx]
-            y_val_fold = y.iloc[val_idx]
+            y_tr_fold = y_train.iloc[tr_idx]
+            y_val_fold = y_train.iloc[val_idx]
 
             strata_model.fit(X_tr_fold, y_tr_fold)
             probs = strata_model.predict_proba(X_val_fold)[:, 1]
@@ -1011,8 +1010,8 @@ def stratified_pca_feature_selection(df, y, params):
             for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
                 X_tr_fold = X_tr_filt.iloc[tr_idx]
                 X_val_fold = X_tr_filt.iloc[val_idx]
-                y_tr_fold = y.iloc[tr_idx]
-                y_val_fold = y.iloc[val_idx]
+                y_tr_fold = y_train.iloc[tr_idx]
+                y_val_fold = y_train.iloc[val_idx]
 
                 filter_model.fit(X_tr_fold, y_tr_fold)
                 probs = filter_model.predict_proba(X_val_fold)[:, 1]
@@ -1066,8 +1065,8 @@ def stratified_pca_feature_selection(df, y, params):
                 for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
                     X_tr_fold = X_tr_pca.iloc[tr_idx]
                     X_val_fold = X_tr_pca.iloc[val_idx]
-                    y_tr_fold = y.iloc[tr_idx]
-                    y_val_fold = y.iloc[val_idx]
+                    y_tr_fold = y_train.iloc[tr_idx]
+                    y_val_fold = y_train.iloc[val_idx]
 
                     pca_model.fit(X_tr_fold, y_tr_fold)
                     probs = pca_model.predict_proba(X_val_fold)[:, 1]
@@ -1096,8 +1095,8 @@ def stratified_pca_feature_selection(df, y, params):
                 for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
                     X_tr_fold = X_tr.iloc[tr_idx]
                     X_val_fold = X_tr.iloc[val_idx]
-                    y_tr_fold = y.iloc[tr_idx]
-                    y_val_fold = y.iloc[val_idx]
+                    y_tr_fold = y_train.iloc[tr_idx]
+                    y_val_fold = y_train.iloc[val_idx]
 
                     RFE_model.fit(X_tr_fold, y_tr_fold)
                     probs = RFE_model.predict_proba(X_val_fold)[:, 1]
@@ -1106,7 +1105,8 @@ def stratified_pca_feature_selection(df, y, params):
                 auc = np.mean(aucs)
 
                 selected_mask = RFE_model.support_
-                selected_features = best_tr_subset.columns[selected_mask].tolist()
+                selected_features = best_tr_subset.columns[
+                    selected_mask].tolist()
 
                 results.append((best_tr_subset.columns.tolist(),
                                 RFE_model.estimator_.feature_importances_, auc))
