@@ -199,6 +199,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     best_auc = 0
     best_features = None
 
+    print(f"Lenght of the ranked features{len(ranked_features)}") 
     for p in percentages:
 
         n_keep = int(len(ranked_features) * (p / 100))
@@ -207,7 +208,9 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
         X = full_df[selected]
         y = full_df["Cognitive_Impairment"]
 
-        model = XGBClassifier(**params, tree_method="hist")
+        print(f"Shape of X {X.shape} and y {y.shape} in percentage {p}") 
+        model = XGBClassifier(**params, tree_method="hist",objective="binary:logistic",
+        eval_metric="auc",tree_method="hist",enable_categorical=true,random_state=42)
         model.fit(X, y)
 
         preds = model.predict_proba(X)[:, 1]
@@ -246,7 +249,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
         objective="binary:logistic",
         eval_metric="auc",
         tree_method="hist",
-        enable_categorical=True
+        enable_categorical=True,
+        random_state=42
     ).fit(X_np, y_np)
 
     # Create a folder for the model if it does not already exist.
@@ -457,7 +461,7 @@ def extract_physiological_features(physiological_data, physiological_fs,
     valid_cols=[col for col in feature_df.columns
                 if col[0] in valid_features.get(col[1],[])]
     feature_df=feature_df[valid_cols]
-    print(f"Shape after filtering invalid columns")
+    print(f"Shape after filtering invalid columns {feature_df.shape}")
     feature_df.columns = [f"{col[1]}-{col[2]}-{col[3]}-{col[0]}" if isinstance(col, tuple) else col
                             for col in feature_df.columns.values]
 
