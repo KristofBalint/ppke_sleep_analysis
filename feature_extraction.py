@@ -25,9 +25,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import GroupShuffleSplit, GroupKFold
 from sklearn import metrics
+import traceback
 
 unfuck_old()
-
 
 def get_category_map(csv_path):
     df = pd.read_csv(csv_path)
@@ -570,6 +570,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
 
         except Exception as e:
             print(f"EEG extraction error: {e}")
+            traceback.print_exc()
             row_dict["spindle_count"] = 0
             row_dict["spindle_density"] = 0
             row_dict["spindle_mean_amp"] = 0
@@ -690,6 +691,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
 
         except Exception as e:
             print(f"ECG extraction error: {e}")
+            traceback.print_exc()
             row_dict["mean_hr"] = np.nan
             row_dict["AVNN"] = np.nan
             row_dict["SDNN"] = np.nan
@@ -723,16 +725,20 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
     # -----------------------------
     elif category in ["chin emg", "leg emg"]:
         # print("Calculating EMG features")
-        time_7 = time.perf_counter()
-        row_dict["powerline_ratio"] = powerline_ratio(Pxx, f)
-        row_dict["hf_ratio_signal"] = high_frequency_ratio(Pxx, f)
-        row_dict["spec_peak_min_ratio"] = np.max(Pxx) / (np.min(Pxx) + 1e-12)
-        #row_dict["rms"] = tsf.root_mean_square(data)
-        row_dict["energy_ratio_chunks"] = \
-        tsf.energy_ratio_by_chunks(data, param=[{"num_segments": 10,
-                                                 "segment_focus": 5}])[0][1]
-        row_dict["num_peaks"] = tsf.number_peaks(data, n=3)
-        time_8 = time.perf_counter()
+        try:
+            time_7 = time.perf_counter()
+            row_dict["powerline_ratio"] = powerline_ratio(Pxx, f)
+            row_dict["hf_ratio_signal"] = high_frequency_ratio(Pxx, f)
+            row_dict["spec_peak_min_ratio"] = np.max(Pxx) / (np.min(Pxx) + 1e-12)
+            #row_dict["rms"] = tsf.root_mean_square(data)
+            row_dict["energy_ratio_chunks"] = \
+            tsf.energy_ratio_by_chunks(data, param=[{"num_segments": 10,
+                                                     "segment_focus": 5}])[0][1]
+            row_dict["num_peaks"] = tsf.number_peaks(data, n=3)
+            time_8 = time.perf_counter()
+        except Exception e:
+            print(f"EMG extraction error: {e}")
+            traceback.print_exc()
         #print(f"EMG feature calculations time{time_8 - time_7}")
         #print(f"Total_time{time_8 - time_1}")
     # -----------------------------
@@ -801,6 +807,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
 
         except Exception as e:
             print(f"SPO2 extraction error: {e}")
+            traceback.print_exc()
             row_dict["mean_resp_rate"] = np.nan
             row_dict["resp_variability"] = np.nan
             row_dict["linear_trend"] = np.nan
