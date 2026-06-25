@@ -211,7 +211,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
         print(f"Shape of X {X.shape} and y {y.shape} in percentage {p}") 
         model = XGBClassifier(**params, tree_method="hist",objective="binary:logistic",
-        eval_metric="auc",tree_method="hist",enable_categorical=true,random_state=42)
+                                eval_metric="auc",enable_categorical=true,random_state=42)
         model.fit(X, y)
 
         preds = model.predict_proba(X)[:, 1]
