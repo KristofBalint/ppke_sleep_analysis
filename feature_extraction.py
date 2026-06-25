@@ -736,7 +736,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                                                      "segment_focus": 5}])[0][1]
             row_dict["num_peaks"] = tsf.number_peaks(data, n=3)
             time_8 = time.perf_counter()
-        except Exception e:
+        except Exception as e:
             print(f"EMG extraction error: {e}")
             traceback.print_exc()
         #print(f"EMG feature calculations time{time_8 - time_7}")
