@@ -72,3 +72,21 @@ def unfuck_old():
         np.sometrue = np.any
     if not hasattr(np, 'in1d'):
         np.in1d = np.isin
+    try:
+        from xgboost import XGBClassifier
+        if not hasattr(XGBClassifier, "__sklearn_tags__"):
+            def dummy_sklearn_tags(self):
+                # Return scikit-learn's standard default tags for a classifier
+                return {
+                    "estimator_type": "classifier",
+                    "binary_only": False,
+                    "multilabel": False,
+                    "multioutput": False,
+                    "no_validation": False,
+                    "poor_score": False,
+                    "requires_y": True,
+                    "requires_fit": True,
+                }
+            XGBClassifier.__sklearn_tags__ = dummy_sklearn_tags
+    except ImportError:
+        pass
