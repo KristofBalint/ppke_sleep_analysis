@@ -120,6 +120,13 @@ VALID_STAGE_NAMES = list(STAGE_MAP.values()) + ["All"]
 
 
 def get_master_feature_names(category_lookup):
+    """
+    Creates feature name strings for the feature scheme transformation
+    
+    :category_lookup: the channel_table.csv containing the various unique channel names and what categories the channels fall into
+
+    :return: list of pivoted channel names
+    """
     MASTER_FEATURE_NAMES = []
     for ch in UNIQUE_CHANNELS:
         cat = category_lookup.get(ch)
@@ -148,6 +155,13 @@ def inspect_raw(raw, label):
 
 
 def concordance_cc(x, y):
+    """Concordance correlation coefficient measures the agreement between two variables
+
+    :x: time series of data
+    :y: time series of data
+
+    :return: Concordance
+    """
     mean_x, mean_y = np.mean(x), np.mean(y)
     var_x, var_y = np.var(x), np.var(y)
     cov_xy = np.mean((x - mean_x) * (y - mean_y))
@@ -252,6 +266,15 @@ def powerline_ratio(Pxx, f, line_freq=50, bandwidth=1):
 
 # 3.5 Cross channel synchrony helper functions------------------------------------
 def peak_lag(x, y, fs):
+    """
+    Calculates the average time difference between the closest peaks of two time series. It's the lag of peaks, and not the peak of lags.
+
+    :x: time series of data
+    :y: time series of data
+    :fs: sampling frequency
+
+    :return: average lag time between the two data
+    """
     peaks_x, _ = find_peaks(x, distance=fs * 1)
     peaks_y, _ = find_peaks(y, distance=fs * 1)
     if len(peaks_x) == 0 or len(peaks_y) == 0:
@@ -264,12 +287,16 @@ def peak_lag(x, y, fs):
 
 
 def crosscorr_lag(x, y, fs):
+    "Cross correlation of lags"
     corr = correlate(x - np.mean(x), y - np.mean(y), mode="full")
     lag_samples = np.argmax(corr) - (len(x) - 1)
     return lag_samples / fs
 
 
 def phase_locking(x, y):
+    """
+    Difference of phase calculated from hibert transform
+    """
     hx = hilbert(x)
     hy = hilbert(y)
     phase_x = np.angle(hx)
@@ -279,6 +306,15 @@ def phase_locking(x, y):
 
 
 def synchrony_features(chest, abd, fs):
+    """
+    Calculation of the above synchrony features
+
+    :chest: archaic variable name, when this was only used for respiratory data, can be any time series
+    :abd: archaic variable name, when this was only used for respiratory data, can be any time series
+    :fs: sampling frequency
+
+    :return: all the calculated synchrony features in one variable
+    """
     r, _ = pearsonr(chest, abd)
     ccc = concordance_cc(chest, abd)
     lag = crosscorr_lag(chest, abd, fs)
@@ -290,6 +326,16 @@ def synchrony_features(chest, abd, fs):
 
 
 def process_synchrony_pair(pair, raw_psg, STAGE_MAP, hypnogram):
+    """
+    Function that processes the synchrony pairs with the data divided into sleep stages
+
+    :pair: a list with two elements containing the names of channels
+    :raw_psg: polyosomnographic data read in from the edf files
+    :STAGE_MAP: numerical coding of sleep stages
+    :hypnogram: time mapping of sleep stage
+
+    :return: the synchrony pair data coupled with the sleep stages
+    """
     if not (pair[0] in raw_psg.ch_names and pair[1] in raw_psg.ch_names):
         return []
 
@@ -320,6 +366,16 @@ def process_synchrony_pair(pair, raw_psg, STAGE_MAP, hypnogram):
 
 # 3.6 Stage transition helper functions
 def compute_transition_resp_features(stages,resp,fs,window_sec=60):
+    """
+    Computes the respiratory features around the sleep transitions
+
+    :stages: sleep stage data
+    :resp: respiratory channels
+    :fs: samplic frequency
+    :window_sec: length of the time window around the transition
+
+    :return: various metrics about the sleep stage transitions, including mean, std and their differences
+    """
     features = {}
     transitions = np.where(np.diff(stages) != 0)[0]
     for idx in transitions:
@@ -347,8 +403,20 @@ def compute_transition_resp_features(stages,resp,fs,window_sec=60):
     return aggregate_transition_features(features) 
 
 
-def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
-                     processed=True):
+def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processed=True):
+    """
+    Extracts features of a single channel in a category dependent manner. Every channel has generic features, 
+    and category dependent features with the exception of EOG channels.
+
+    :data: time series of data
+    :fs: sampling frequency
+    :ch_name: normalised name of the channel
+    :category: what type of device was the channel recorded with
+    :hypnogram_subset: determines what sleep stage it was in
+    :processed: determines if the dataset was normalised or not
+
+    :return: returns the calculated features in one variable
+    """
     # -----------------------------
     # Generic Features (all channels)
     # -----------------------------
@@ -828,8 +896,18 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
     return row_dict
 
 
-def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,
-                    processed=True):
+def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,processed=True):
+    """
+    Divides the channel into sleep stages, and processes the channel
+
+    :ch_name: normalised channel name
+    :raw_psg: physiological data from the edf files
+    :category_lookup: the channel_table.csv containing the various unique channel names and what categories the channels fall into
+    :hypnogram: time mapping of sleep stage
+    :processed: determines if the dataset was normalised or not
+
+    :return: the data processed in each sleep stage
+    """
     data, _ = raw_psg[ch_name]
     data = data.ravel()
     fs = raw_psg.info["sfreq"]
@@ -846,8 +924,7 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,
         res = extract_features(data, fs, ch_name, category, None, processed)
         return [{**res, "stage": "All"}] if res else []
 
-    hypnogram = np.repeat(hypnogram,
-                          int(fs * 30))  # Not having this caused so much problems.
+    hypnogram = np.repeat(hypnogram,int(fs * 30))  # Not having this caused so much problems.
 
     min_len = min(len(data), len(hypnogram))
     data = data[:min_len]
@@ -886,6 +963,16 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,
 
 
 def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,processed=True):
+    """
+    Two part assessment of signal quality. First it processes each channel of the polysomnographic data in parallel.
+    Then it processes the synchronity of various pairs in parallel
+
+    
+    :raw_psg: polyosomnographic data read in from the edf files
+    :category_lookup: the channel_table.csv containing the various unique channel names and what categories the channels fall into
+    :hypnogram: time mapping of sleep stage
+    :processed: determines if the dataset was normalised or not
+    """
     results = Parallel(n_jobs=2, prefer="threads")(
         delayed(process_channel)(
             ch, raw_psg, category_lookup, hypnogram, processed
@@ -935,6 +1022,16 @@ def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,processed=Tru
 
 
 def stratified_pca_feature_selection(df, y, params):
+    """
+    Stratified feature selection based on NaN count filtering and RFE/PCA dimensionality reduction, 
+    and the feature importances multiplied by the AUROCs of various stratas.
+
+    :df: pandas dataframe
+    :y: target variable
+    :params: parameters of the XGBoost classifier
+
+    :return: global vector of various features and weights calculated
+    """
     base_meta_cols = ['BMI', 'Age', 'Race_Asian', 'Race_Black',
                       'Race_Others', 'Race_Unavailable',
                       'Race_White', 'Sex_Female', 'Sex_Male']
