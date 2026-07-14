@@ -59,7 +59,7 @@ STAGE_MAP = {
     5: "Wake"
 }
 
-metadata = ["subject", "session", "channel", "stage", "category"]
+metadata = ["subject", "session", "channel", "stage", "category","transition_id","transition_type"]
 generic_features = ["abs_energy","abs_sum_changes", "mean_abs_change", "root_mean_square",
                     "variation_coeff", "median","skewness", "kurtosis","longest_strike_above_mean", 
                     "longest_strike_below_mean","quantile_0.1","quantile_0.25","quantile_0.75",
@@ -119,22 +119,22 @@ FEATURES_TO_USE = [c for c in ALL_FEATURE_COLUMNS if
 VALID_STAGE_NAMES = list(STAGE_MAP.values()) + ["All"]
 
 
-def get_master_feature_names(category_lookup):
+def get_master_feature_names(category_lookup, max_transitions=100):
     """
-    Creates feature name strings for the feature scheme transformation
-    
-    :category_lookup: the channel_table.csv containing the various unique channel names and what categories the channels fall into
-
-    :return: list of pivoted channel names
+    Generates consistent column names containing transition_id.
+    Format: category-channel-stage-transition_id-feature
     """
     MASTER_FEATURE_NAMES = []
     for ch in UNIQUE_CHANNELS:
         cat = category_lookup.get(ch)
         if cat in valid_features:
             for stage in VALID_STAGE_NAMES:
-                for feat in valid_features[cat]:
-                    MASTER_FEATURE_NAMES.append(f"{cat}_{ch}_{stage}_{feat}")
-
+                # Include transition IDs from 0 to max_transitions - 1
+                for trans_id in range(max_transitions):
+                    for feat in valid_features[cat]:
+                        MASTER_FEATURE_NAMES.append(
+                            f"{cat}_{ch}_{stage}_{trans_id}_{feat}"
+                        )
     return MASTER_FEATURE_NAMES
 
 
@@ -365,42 +365,32 @@ def process_synchrony_pair(pair, raw_psg, STAGE_MAP, hypnogram):
     return pair_results
 
 # 3.6 Stage transition helper functions
-def compute_transition_resp_features(stages,resp,fs,window_sec=60):
+def extract_local_transition_features(data, boundary_idx, fs, window_sec=60):
     """
-    Computes the respiratory features around the sleep transitions
-
-    :stages: sleep stage data
-    :resp: respiratory channels
-    :fs: samplic frequency
-    :window_sec: length of the time window around the transition
-
-    :return: various metrics about the sleep stage transitions, including mean, std and their differences
+    Calculates generic transition features around a single specific boundary point.
     """
-    features = {}
-    transitions = np.where(np.diff(stages) != 0)[0]
-    for idx in transitions:
-        src = int(stages[idx])
-        dst = int(stages[idx + 1])
-        name = f"{STAGE_MAP[src]}_to_{STAGE_MAP[dst]}"
-        center = idx * 30 * fs
-        before_start = max(0, center - window_sec * fs)
-        before_end = center
-        after_start = center
-        after_end = min(len(resp), center + window_sec * fs)
-        before = resp[before_start:before_end]
-        after = resp[after_start:after_end]
-        if len(before) < fs or len(after) < fs:
-            continue
-        features.setdefault(name, []).append({
-            "mean_before": np.mean(before),
-            "mean_after": np.mean(after),
-            "std_before": np.std(before),
-            "std_after": np.std(after),
-            "recovery": np.mean(after) - np.mean(before),
-            "variability_change":
-                np.std(after) - np.std(before)
-        })
-    return aggregate_transition_features(features) 
+    window_samples = int(window_sec * fs)
+    
+    before_start = max(0, boundary_idx - window_samples)
+    before_end = boundary_idx
+
+    after_start = boundary_idx
+    after_end = min(len(data), boundary_idx + window_samples)
+
+    before = data[before_start:before_end]
+    after = data[after_start:after_end]
+
+    if len(before) < fs or len(after) < fs:
+        return {}
+
+    return {
+        "trans_mean_before": np.mean(before),
+        "trans_mean_after": np.mean(after),
+        "trans_std_before": np.std(before),
+        "trans_std_after": np.std(after),
+        "trans_recovery": np.mean(after) - np.mean(before),
+        "trans_variability_change": np.std(after) - np.std(before)
+    }
 
 
 def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processed=True):
@@ -896,68 +886,85 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
     return row_dict
 
 
-def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,processed=True):
-    """
-    Divides the channel into sleep stages, and processes the channel
-
-    :ch_name: normalised channel name
-    :raw_psg: physiological data from the edf files
-    :category_lookup: the channel_table.csv containing the various unique channel names and what categories the channels fall into
-    :hypnogram: time mapping of sleep stage
-    :processed: determines if the dataset was normalised or not
-
-    :return: the data processed in each sleep stage
-    """
+def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None, processed=True):
     data, _ = raw_psg[ch_name]
     data = data.ravel()
     fs = raw_psg.info["sfreq"]
 
     data = data[~np.isnan(data)]
-
     if len(data) < 10:
         return None
 
     category = category_lookup.get(ch_name, "unknown")
 
     if hypnogram is None:
-        # Fallback to whole-signal processing if no hypnogram
         res = extract_features(data, fs, ch_name, category, None, processed)
-        return [{**res, "stage": "All"}] if res else []
+        return [{**res, "stage": "All", "transition_id": 0, "transition_type": "None"}] if res else []
 
-    hypnogram = np.repeat(hypnogram,int(fs * 30))  # Not having this caused so much problems.
-
-    min_len = min(len(data), len(hypnogram))
+    # Align hypnogram and data
+    hypnogram_expanded = np.repeat(hypnogram, int(fs * 30))
+    min_len = min(len(data), len(hypnogram_expanded))
     data = data[:min_len]
-    hypnogram = hypnogram[:min_len]
+    hypnogram_expanded = hypnogram_expanded[:min_len]
 
-    # print(f"DEBUG: Channel {ch_name} data length: {len(data)}")
-    # print(f"DEBUG: Hypnogram data length: {len(hypnogram)}")
-
+    # Find where stages change in the expanded hypnogram
+    # This gives us the boundaries of continuous blocks
+    stage_changes = np.where(np.diff(hypnogram_expanded) != 0)[0]
+    
+    # Block boundaries: from 0 to the first change, then change to change, up to the end
+    block_boundaries = [0] + list(stage_changes + 1) + [min_len]
+    
     stage_results = []
-    unique_stages = np.unique(hypnogram)
-    # print(unique_stages)
-    for stage_val in unique_stages:
-        # stage_name = STAGE_MAP.get(stage_val, f"Unknown_{stage_val}")
+    transition_counter = 0
+
+    # Iterate through continuous blocks chronologically
+    for i in range(len(block_boundaries) - 1):
+        start_idx = block_boundaries[i]
+        end_idx = block_boundaries[i + 1]
+        
+        stage_val = hypnogram_expanded[start_idx]
         if stage_val not in STAGE_MAP:
-            continue  # We don't need the undefined stages
+            continue  # Skip undefined stages
+            
         stage_name = STAGE_MAP[stage_val]
+        
+        # Determine transition type
+        if end_idx < min_len:
+            next_stage_val = hypnogram_expanded[end_idx]
+            next_stage_name = STAGE_MAP.get(next_stage_val, "Unknown")
+            transition_type = f"{stage_name}_to_{next_stage_name}"
+        else:
+            transition_type = f"{stage_name}_to_End"
 
-        # Mask data for this specific stage
-        mask = (hypnogram == stage_val)
-        stage_data = data[mask]
-        stage_hypno = hypnogram[mask]
+        # Slice data for this specific continuous block
+        block_data = data[start_idx:end_idx]
+        block_hypno = hypnogram_expanded[start_idx:end_idx]
 
-        # print(  f"DEBUG: {ch_name} Stage {stage_name} has {len(stage_data)} samples.")
-        # print(f"DEBUG: Threshold is {fs * 10}")
-
-        if len(stage_data) < 5:  # Originally skipped stages shorter than 10 seconds, turned out that's too much
+        if len(block_data) < 5: 
             continue
 
-        features = extract_features(stage_data, fs, ch_name, category,
-                                    stage_hypno, processed)
+        # 1. Extract static features for this block
+        features = extract_features(block_data, fs, ch_name, category, block_hypno, processed)
+        
         if features:
             features["stage"] = stage_name
+            features["transition_id"] = transition_counter
+            features["transition_type"] = transition_type
+            
+            # 2. Extract transition dynamic features around the boundary (end_idx)
+            # We pass the full data stream so it can peek ahead into the next stage
+            trans_features = extract_local_transition_features(
+                data=data, 
+                boundary_idx=end_idx, 
+                fs=fs, 
+                window_sec=60
+            )
+            
+            # Merge the static block features with the dynamic transition features
+            features.update(trans_features)
             stage_results.append(features)
+            
+        transition_counter += 1
 
     return stage_results
 
