@@ -993,12 +993,12 @@ def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,processed=Tru
             flattened.extend(r)
     flattened = pd.DataFrame(flattened)
 
-    if hypnogram is not None:
+    if hypnogram is not None and not flattened.empty:
         synchron_pairs = [
             #in-modality features
             ["chest", "abd"], ["e1", "e2"], ["e1-m2", "e2-m1"], ["f3", "f4"],
             ["f3-m2", "f4-m1"], ["c3", "c4"], ["c3-m2", "c4-m1"], ["o1", "o2"],
-            ["o1-m2", "o2-m1"], ["rleg+", "lleg+"], ["rleg-", "lleg-"]
+            ["o1-m2", "o2-m1"], ["rleg+", "lleg+"], ["rleg-", "lleg-"],
         #cross-modal features
             ["abd","ecg"],["e2","o2"],["e2-m1","o2-m1"], #eog compared to occipital, because in frontal regions it bleeds into it, occipital is far enough to not happen
             ["f4","chest"],["f4-m1","chest"], ["c4","chest"], ["c4-m1","chest"],
