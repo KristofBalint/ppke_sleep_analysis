@@ -229,8 +229,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     X = full_df[selected_features]
     y = full_df["Cognitive_Impairment"]
 
-    features = np.asarray(features, dtype=np.float32)
-    labels = np.asarray(labels, dtype=bool)
+    #features = np.asarray(features, dtype=np.float32)
+    #labels = np.asarray(labels, dtype=bool)
 
     # Train the models on the features.
     if verbose:
@@ -457,13 +457,13 @@ def extract_physiological_features(physiological_data, physiological_fs,
         print("No session name")
     print(f"Shape after reindexing {quality_df.shape}")
     feature_df = quality_df.pivot(index=['subject', 'session'],
-                                  columns=['category','channel', 'stage'])
+                                  columns=['category','channel', 'stage','transition_id'])
     print(f"Shape after pivoting {feature_df.shape}")
     valid_cols=[col for col in feature_df.columns
                 if col[0] in valid_features.get(col[1],[])]
     feature_df=feature_df[valid_cols]
     print(f"Shape after filtering invalid columns {feature_df.shape}")
-    feature_df.columns = [f"{col[1]}-{col[2]}-{col[3]}-{col[0]}" if isinstance(col, tuple) else col
+    feature_df.columns = [f"{col[1]}-{col[2]}-{col[3]}-{col[4]}-{col[0]}" if isinstance(col, tuple) else col
                             for col in feature_df.columns.values]
 
 
@@ -474,31 +474,6 @@ def extract_physiological_features(physiological_data, physiological_fs,
     feature_df["session"] = feature_df.index.get_level_values(1)
 
     return feature_df.reset_index(drop=True)
-
-    '''
-    final_vector = feature_df.to_numpy().flatten().astype(np.float32)
-
-    # Safety Check:
-    expected_len = len(MASTER_FEATURE_NAMES)
-    if len(final_vector) != expected_len:
-        # This should be impossible now, but good for debugging
-        #print("BITCH")
-        print(len(final_vector))
-        print(expected_len)
-        return np.zeros(expected_len, dtype=np.float32)
-
-    return final_vector
-    '''
-    # quality_df = quality_df.fillna(0)
-
-    # feature_df = quality_df.drop(
-    #    columns=["channel", "category"],
-    #    errors="ignore"
-    # )
-
-    # feature_vector = feature_df.to_numpy().flatten()
-
-    # return feature_vector.astype(np.float32)
 
 
 def extract_algorithmic_annotations_features(algo_data):
