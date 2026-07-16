@@ -1144,11 +1144,28 @@ def stratified_pca_feature_selection(df, y, params):
         best_tr_subset = X_tr_sub
         best_te_subset = X_te_sub
 
-        for limit in limits:  # pre filtering using NaN counts
+        
+        # NaN filtering based
+        nan_counts_per_col = X_tr_sub.isna().sum()
+        unique_subsets = {}
+        distinct_counts = sorted(nan_counts_per_col.unique())
+    
+        for thresh in distinct_counts:
+            cols_to_keep = nan_counts_per_col[ nan_counts_per_col <= thresh].index.tolist()
+            subset_key = tuple(sorted(cols_to_keep))
+            if subset_key and subset_key not in unique_subsets:
+                unique_subsets[subset_key] = thresh
+        
+        '''for limit in limits:  # pre filtering using NaN counts
             if limit > len(X_tr_sub):
                 continue
             X_tr_filt = X_tr_sub.dropna(thresh=limit, axis=1)
             X_te_filt = X_te_sub[X_tr_filt.keys()]
+           '''
+        #many limits in the old method had the exact same feature set, which is both redundant and makes the end product biased
+        for subset_cols, actual_limit in unique_subsets.items():
+            X_tr_filt = X_tr_sub[list(subset_cols)]
+            X_te_filt = X_te_sub[list(subset_cols)]
             filter_model = XGBClassifier(**params, random_state=42,
                                          enable_categorical=True,
                                          tree_method="hist")
@@ -1200,9 +1217,23 @@ def stratified_pca_feature_selection(df, y, params):
             if comp > max_possible_components:
                 continue
 
-            corr_matrix = best_tr_subset.corr().abs()
+            '''corr_matrix = best_tr_subset.corr().abs()
             avg_corr = np.nanmean(
                 corr_matrix.values[np.triu_indices_from(corr_matrix, k=1)])
+'''#takes too much memory to calculate
+            X_filled = best_tr_subset.fillna(best_tr_subset.mean()).values
+            mean = X_filled.mean(axis=0)
+            std = X_filled.std(axis=0)
+            std[std == 0] = 1.0  # Avoid division by zero
+            Z = (X_filled - mean) / std
+            N, M = Z.shape
+            row_sums = Z.sum(axis=1)
+            sum_of_all_elements = np.sum(row_sums ** 2) / N
+            sum_off_diagonal = sum_of_all_elements - M
+            sum_upper_tri = sum_off_diagonal / 2
+            num_upper_elements = M * (M - 1) / 2
+            avg_corr = sum_upper_tri / num_upper_elements
+
 
             if avg_corr > 0.6 or type == "stage" or val == "resp":
                 # PCA because stages and respiratory data are multimodal
