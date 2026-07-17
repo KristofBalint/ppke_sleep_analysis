@@ -1120,7 +1120,7 @@ def stratified_pca_feature_selection(df, y, params):
 
         aucs = []
 
-        for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
+        for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups[train_idx]):
             if isinstance(X_tr_sub, np.ndarray):
                 X_tr_sub = pd.DataFrame(X_tr_sub)
             if isinstance(y_train, np.ndarray):
@@ -1175,7 +1175,7 @@ def stratified_pca_feature_selection(df, y, params):
 
             aucs = []
 
-            for tr_idx, val_idx in gkf.split(X_tr_filt, y_train, groups.iloc[train_idx]):
+            for tr_idx, val_idx in gkf.split(X_tr_filt, y_train, groups[train_idx]):
                 if isinstance(X_tr_filt,np.ndarray):
                     X_tr_filt = pd.DataFrame(X_tr_filt)
                 if isinstance(y_train,np.ndarray):
@@ -1249,7 +1249,7 @@ def stratified_pca_feature_selection(df, y, params):
 
                 aucs = []
 
-                for tr_idx, val_idx in gkf.split(X_tr_pca, y_train, groups.iloc[train_idx]):
+                for tr_idx, val_idx in gkf.split(X_tr_pca, y_train, groups[train_idx]):
                     if isinstance(X_tr_pca,np.ndarray):
                         X_tr_pca = pd.DataFrame(X_tr_pca)
                     if isinstance(y_train,np.ndarray):
@@ -1285,7 +1285,7 @@ def stratified_pca_feature_selection(df, y, params):
                 # auc = metrics.roc_auc_score(y_test, probs)
                 aucs = []
 
-                for tr_idx, val_idx in gkf.split(X_tr, y_train, groups.iloc[train_idx]):
+                for tr_idx, val_idx in gkf.split(X_tr, y_train, groups[train_idx]):
                     if isinstance(X_tr,np.ndarray):
                         X_tr=pd.DataFrame(X_tr)
                     if isinstance(y_train,np.ndarray):
