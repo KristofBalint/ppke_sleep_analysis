@@ -65,7 +65,9 @@ generic_features = ["abs_energy","abs_sum_changes", "mean_abs_change", "root_mea
                     "longest_strike_below_mean","quantile_0.1","quantile_0.25","quantile_0.75",
                     "quantile_0.9","autocorr_lag_1","autocorr_lag_2","autocorr_lag_5",
                     "autocorr_lag_10","ratio_beyond_r_sigma_2","flatline_pct", "clipping_pct", 
-                    "mean", "std", "variance", "hf_power_ratio","lf_power_ratio"]
+                    "mean", "std", "variance", "hf_power_ratio","lf_power_ratio",
+                    "trans_mean_before","trans_mean_after","trans_std_before","trans_std_after",
+                    "trans_recovery","trans_variability_change"]
 emg_only_features = ['hf_ratio_signal', 'powerline_ratio',
                      'spec_peak_min_ratio', 'energy_ratio_chunks']
 ecg_only_features_1 = ['rms', 'ptp', 'max_amp', 'flatline_duration', 'is_flat',
