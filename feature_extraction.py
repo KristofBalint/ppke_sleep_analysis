@@ -135,7 +135,7 @@ def get_master_feature_names(category_lookup, max_transitions=100):
                 for trans_id in range(max_transitions):
                     for feat in valid_features[cat]:
                         MASTER_FEATURE_NAMES.append(
-                            f"{cat}_{ch}_{stage}_{trans_id}_{feat}"
+                            f"{cat}-{ch}-{stage}-{trans_id}-{feat}"
                         )
     return MASTER_FEATURE_NAMES
 
