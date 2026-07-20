@@ -72,6 +72,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     pbar = tqdm(range(num_records), desc="Extracting Features", unit="record",
                 disable=not verbose)
     backup="backup.csv"
+    if os.path.exists(backup):#If by any accident already exists, removes it
+        os.remove(backup)
     header_written=False
     for i in pbar:
         try:
@@ -196,10 +198,14 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     params = {'max_depth': 7, 'learning_rate': 0.030842680992267595, 'n_estimators': 963, 'subsample': 0.668562285184131, 'colsample_bytree': 0.6664590708996059, 'gamma': 1.0645185377275237, 'min_child_weight': 16, 'reg_alpha': 0.0600354240141498, 'reg_lambda': 35.771321493090454}
 
     print(f"DEBUG: shape of features {len(features)}")
-    if not features.empty:
+    if len(features)>0:
         full_df = pd.concat(features, ignore_index=True)
+    elif os.path.exists(backup):#checks if even exists
+        full_df = pd.read_csv(backup)
     else:
-        full_df=pd.read_csv("backup.csv")
+        raise RuntimeError(
+            "No successful patients and backup.csv was never created."
+        )
     y = full_df["Cognitive_Impairment"]
     ranked_features = stratified_pca_feature_selection(full_df, y, params)
 
