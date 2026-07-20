@@ -444,7 +444,7 @@ def extract_physiological_features(physiological_data, physiological_fs,
             sig = self._data[key]
             return sig.reshape(1, -1), None
 
-    raw_psg = FakeRaw(processed_channels, physiological_fs)
+    raw_psg = FakeRaw(processed_channels, processed_fs)
     quality_df = assess_signal_quality(raw_psg, category_lookup,
                                        hypnogram=hypnogram)
     quality_df["subject"]=patient_id
