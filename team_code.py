@@ -71,6 +71,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
     pbar = tqdm(range(num_records), desc="Extracting Features", unit="record",
                 disable=not verbose)
+    backup="backup.csv"
+    header_written=False
     for i in pbar:
         try:
             # Extract identifiers for this specific record
@@ -140,6 +142,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             # Load the diagnoses; these data will not be available in the hidden validation and test sets.
             diagnosis_file = os.path.join(data_folder, DEMOGRAPHICS_FILE)
             label = load_diagnoses(diagnosis_file, patient_id)
+            
 
             # Store the features and labels, but
             # the human annotations are not available on the hidden validation and test sets, but you
@@ -172,6 +175,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 feat_df["W_prob"]=algorithmic_features[9]
                 feat_df["N3_prob"]=algorithmic_features[10]
                 feat_df["Ar_prob"]=algorithmic_features[11]
+                feat_df.to_csv(backup,mode="a",header=not header_written,index=False)
+                header_written=True
                 features.append(feat_df)
                 #features.append(np.hstack(    [demographic_features, physiological_vector,algorithmic_features]))
                 labels.append(label)
@@ -191,7 +196,10 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     params = {'max_depth': 7, 'learning_rate': 0.030842680992267595, 'n_estimators': 963, 'subsample': 0.668562285184131, 'colsample_bytree': 0.6664590708996059, 'gamma': 1.0645185377275237, 'min_child_weight': 16, 'reg_alpha': 0.0600354240141498, 'reg_lambda': 35.771321493090454}
 
     print(f"DEBUG: shape of features {len(features)}")
-    full_df = pd.concat(features, ignore_index=True)
+    if not features.empty:
+        full_df = pd.concat(features, ignore_index=True)
+    else:
+        full_df=pd.read_csv("backup.csv")
     y = full_df["Cognitive_Impairment"]
     ranked_features = stratified_pca_feature_selection(full_df, y, params)
 
