@@ -147,7 +147,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             print("CONTENT AND TYPE OF LABEL")
             print(label)
             print(type(label))
-            if label == 0 or label == 1:
+            if int(label) in (0,1):
                 #physiological_vector=physiological_features.to_numpy().flatten().astype(np.float32)
                 feat_df=physiological_features.copy()
                 feat_df["Cognitive_Impairment"] = label
