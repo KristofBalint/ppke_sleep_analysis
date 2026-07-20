@@ -248,8 +248,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     print(X.shape)
     print(y.shape)
 
-    X_np = X.to_numpy().flatten().astype(np.float32)
-    y_np = y.to_numpy().flatten().astype(bool)
+    X_np = X.to_numpy().astype(np.float32)
+    y_np = y.to_numpy().astype(bool)
     print(X_np.shape)
     print(y_np.shape)
 
