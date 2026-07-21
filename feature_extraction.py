@@ -889,86 +889,103 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
 
 
 def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None, processed=True):
-    data, _ = raw_psg[ch_name]
-    data = data.ravel()
-    fs = raw_psg.info["sfreq"]
-
-    data = data[~np.isnan(data)]
-    if len(data) < 10:
-        return None
-
-    category = category_lookup.get(ch_name, "unknown")
-
-    if hypnogram is None:
-        res = extract_features(data, fs, ch_name, category, None, processed)
-        return [{**res, "stage": "All", "transition_id": 0, "transition_type": "None"}] if res else []
-
-    # Align hypnogram and data
-    hypnogram_expanded = np.repeat(hypnogram, int(fs * 30))
-    min_len = min(len(data), len(hypnogram_expanded))
-    data = data[:min_len]
-    hypnogram_expanded = hypnogram_expanded[:min_len]
-
-    # Find where stages change in the expanded hypnogram
-    # This gives us the boundaries of continuous blocks
-    stage_changes = np.where(np.diff(hypnogram_expanded) != 0)[0]
+    try:
+        data, _ = raw_psg[ch_name]
+        data = data.ravel()
+        fs = raw_psg.info["sfreq"]
     
-    # Block boundaries: from 0 to the first change, then change to change, up to the end
-    block_boundaries = [0] + list(stage_changes + 1) + [min_len]
+        data = data[~np.isnan(data)]
+        if len(data) < 10:
+            return None
     
-    stage_results = []
-    transition_counter = 0
-
-    # Iterate through continuous blocks chronologically
-    for i in range(len(block_boundaries) - 1):
-        start_idx = block_boundaries[i]
-        end_idx = block_boundaries[i + 1]
+        category = category_lookup.get(ch_name, "unknown")
+    
+        if hypnogram is None:
+            res = extract_features(data, fs, ch_name, category, None, processed)
+            return [{**res, "stage": "All", "transition_id": 0, "transition_type": "None"}] if res else []
+    
+        # Align hypnogram and data
+        hypnogram_expanded = np.repeat(hypnogram, int(fs * 30))
+        min_len = min(len(data), len(hypnogram_expanded))
+        data = data[:min_len]
+        hypnogram_expanded = hypnogram_expanded[:min_len]
+    
+        # Find where stages change in the expanded hypnogram
+        # This gives us the boundaries of continuous blocks
+        stage_changes = np.where(np.diff(hypnogram_expanded) != 0)[0]
         
-        stage_val = hypnogram_expanded[start_idx]
-        if stage_val not in STAGE_MAP:
-            continue  # Skip undefined stages
-            
-        stage_name = STAGE_MAP[stage_val]
+        # Block boundaries: from 0 to the first change, then change to change, up to the end
+        block_boundaries = [0] + list(stage_changes + 1) + [min_len]
         
-        # Determine transition type
-        if end_idx < min_len:
-            next_stage_val = hypnogram_expanded[end_idx]
-            next_stage_name = STAGE_MAP.get(next_stage_val, "Unknown")
-            transition_type = f"{stage_name}_to_{next_stage_name}"
-        else:
-            transition_type = f"{stage_name}_to_End"
-
-        # Slice data for this specific continuous block
-        block_data = data[start_idx:end_idx]
-        block_hypno = hypnogram_expanded[start_idx:end_idx]
-
-        if len(block_data) < 5: 
-            continue
-
-        # 1. Extract static features for this block
-        features = extract_features(block_data, fs, ch_name, category, block_hypno, processed)
-        
-        if features:
-            features["stage"] = stage_name
-            features["transition_id"] = transition_counter
-            features["transition_type"] = transition_type
+        stage_results = []
+        transition_counter = 0
+    
+        # Iterate through continuous blocks chronologically
+        for i in range(len(block_boundaries) - 1):
+            start_idx = block_boundaries[i]
+            end_idx = block_boundaries[i + 1]
             
-            # 2. Extract transition dynamic features around the boundary (end_idx)
-            # We pass the full data stream so it can peek ahead into the next stage
-            trans_features = extract_local_transition_features(
-                data=data, 
-                boundary_idx=end_idx, 
-                fs=fs, 
-                window_sec=60
-            )
+            stage_val = hypnogram_expanded[start_idx]
+            if stage_val not in STAGE_MAP:
+                continue  # Skip undefined stages
+                
+            stage_name = STAGE_MAP[stage_val]
             
-            # Merge the static block features with the dynamic transition features
-            features.update(trans_features)
-            stage_results.append(features)
+            # Determine transition type
+            if end_idx < min_len:
+                next_stage_val = hypnogram_expanded[end_idx]
+                next_stage_name = STAGE_MAP.get(next_stage_val, "Unknown")
+                transition_type = f"{stage_name}_to_{next_stage_name}"
+            else:
+                transition_type = f"{stage_name}_to_End"
+    
+            # Slice data for this specific continuous block
+            block_data = data[start_idx:end_idx]
+            block_hypno = hypnogram_expanded[start_idx:end_idx]
+    
+            if len(block_data) < 5: 
+                continue
+    
+            # 1. Extract static features for this block
+            features = extract_features(block_data, fs, ch_name, category, block_hypno, processed)
             
-        transition_counter += 1
+            if features:
+                features["stage"] = stage_name
+                features["transition_id"] = transition_counter
+                features["transition_type"] = transition_type
+                
+                # 2. Extract transition dynamic features around the boundary (end_idx)
+                # We pass the full data stream so it can peek ahead into the next stage
+                trans_features = extract_local_transition_features(
+                    data=data, 
+                    boundary_idx=end_idx, 
+                    fs=fs, 
+                    window_sec=60
+                )
+                
+                # Merge the static block features with the dynamic transition features
+                features.update(trans_features)
+                stage_results.append(features)
+                
+            transition_counter += 1
+    
+        return stage_results
+    except Exception as e:
+        print(f"Something went wrong in channel processing for {ch_name}: {e}")
 
-    return stage_results
+        # Fallback: construct default single-row DataFrame filled with zeros
+        try:
+            master_feature_names = get_master_feature_names(category_lookup)
+            fallback_dict = {feat: 0.0 for feat in master_feature_names}
+        except Exception:
+            fallback_dict = {}
+
+        fallback_dict["channel"] = ch_name
+        fallback_dict["stage"] = "All"
+        fallback_dict["transition_id"] = 0
+        fallback_dict["transition_type"] = "None"
+
+        return pd.DataFrame([fallback_dict])
 
 
 def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,processed=True):
