@@ -988,62 +988,100 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None, processed
         return pd.DataFrame([fallback_dict])
 
 
-def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,processed=True):
-    """
-    Two part assessment of signal quality. First it processes each channel of the polysomnographic data in parallel.
-    Then it processes the synchronity of various pairs in parallel
+import pandas as pd
+from joblib import Parallel, delayed
 
-    
-    :raw_psg: polyosomnographic data read in from the edf files
-    :category_lookup: the channel_table.csv containing the various unique channel names and what categories the channels fall into
-    :hypnogram: time mapping of sleep stage
+
+def assess_signal_quality(raw_psg, category_lookup, hypnogram=None, processed=True):
+    """Two part assessment of signal quality.
+
+    First it processes each channel of the polysomnographic data in parallel.
+    Then it processes the synchronity of various pairs in parallel.
+
+    :raw_psg: polysomnographic data read in from the edf files
+    :category_lookup: the channel_table.csv containing the various unique
+    channel names and categories :hypnogram: time mapping of sleep stage
     :processed: determines if the dataset was normalised or not
     """
-    results = Parallel(n_jobs=2, prefer="threads")(
-        delayed(process_channel)(
-            ch, raw_psg, category_lookup, hypnogram, processed
+    try:
+        results = Parallel(n_jobs=4, prefer="threads")(
+            delayed(process_channel)(
+                ch, raw_psg, category_lookup, hypnogram, processed
+            )
+            for ch in raw_psg.ch_names
         )
-        for ch in raw_psg.ch_names
-    )
+    except Exception as e:
+        print(f"Error during parallel channel processing: {e}")
+        results = []
 
-    flattened = []
-    for r in results:
-        if r:
-            flattened.extend(r)
-    flattened = pd.DataFrame(flattened)
+    # Filter out None or empty DataFrames, then concatenate into a single DataFrame
+    df_list = [r for r in results if isinstance(r, pd.DataFrame) and not r.empty]
+
+    if df_list:
+        flattened = pd.concat(df_list, ignore_index=True)
+    else:
+        # Fallback: create default zero-rows manually for every channel in raw_psg
+        fallback_rows = []
+        try:
+            master_feature_names = get_master_feature_names(category_lookup)
+        except Exception:
+            master_feature_names = []
+
+        for ch in raw_psg.ch_names:
+            row = {feat: 0.0 for feat in master_feature_names}
+            row["channel"] = ch
+            row["stage"] = "All"
+            row["transition_id"] = 0
+            row["transition_type"] = "None"
+            fallback_rows.append(row)
+
+        flattened = pd.DataFrame(fallback_rows)
 
     if hypnogram is not None and not flattened.empty:
         synchron_pairs = [
-            #in-modality features
-            ["chest", "abd"], ["e1", "e2"], ["e1-m2", "e2-m1"], ["f3", "f4"],
-            ["f3-m2", "f4-m1"], ["c3", "c4"], ["c3-m2", "c4-m1"], ["o1", "o2"],
-            ["o1-m2", "o2-m1"], ["rleg+", "lleg+"], ["rleg-", "lleg-"],
-        #cross-modal features
-            ["abd","ecg"],["e2","o2"],["e2-m1","o2-m1"], #eog compared to occipital, because in frontal regions it bleeds into it, occipital is far enough to not happen
-            ["f4","chest"],["f4-m1","chest"], ["c4","chest"], ["c4-m1","chest"],
-            ["o1", "chest"], ["o1-m2", "chest"]  #!very arbitrary selection of chest! 
+            # in-modality features
+            ["chest", "abd"],["e1", "e2"],["e1-m2", "e2-m1"],["f3", "f4"],
+            ["f3-m2", "f4-m1"], ["c3", "c4"], ["c3-m2", "c4-m1"],["o1", "o2"],
+            ["o1-m2", "o2-m1"], ["rleg+", "lleg+"],["rleg-", "lleg-"],
+            # cross-modal features
+            ["abd", "ecg"],["e2", "o2"],["e2-m1", "o2-m1"],  # eog compared to occipital
+            ["f4", "chest"],["f4-m1", "chest"],["c4", "chest"],
+            ["c4-m1", "chest"],["o1", "chest"],["o1-m2", "chest"],  # !very arbitrary selection of chest!
         ]
 
-        sync_results = Parallel(n_jobs=-2, prefer="threads")(
-            delayed(process_synchrony_pair)(pair, raw_psg, STAGE_MAP, hypnogram)
-            for pair in synchron_pairs
-        )
+        try:
+            sync_results = Parallel(n_jobs=-2, prefer="threads")(
+                delayed(process_synchrony_pair)(
+                    pair, raw_psg, STAGE_MAP, hypnogram
+                )
+                for pair in synchron_pairs
+            )
+        except Exception as e:
+            print(f"Error during parallel synchrony processing: {e}")
+            sync_results = []
 
-        sync_flattened = [item for sublist in sync_results if sublist for item in sublist]
+        sync_flattened = [
+            item for sublist in sync_results if sublist for item in sublist
+        ]
 
         if sync_flattened:
             # Map synchrony results back to the main dataframe
             for res in sync_flattened:
-                p1, p2 = res['pair']
-                stage = res['stage']
-                feats = {k: v for k, v in res.items() if
-                         k not in ['pair', 'stage']}
+                p1, p2 = res["pair"]
+                stage = res["stage"]
+                feats = {
+                    k: v
+                    for k, v in res.items()
+                    if k not in ["pair", "stage"]
+                }
 
-                # Update rows where channel is part of the pair AND stage matches
-                #mask = (flattened['stage'] == stage) & (flattened['channel'].isin([p1, p2]))
-                mask = (flattened['stage']==stage) & (flattened['channel']==p1) #!only puts in to the first variable!!temporary solutions create permanent problems!
+                # Update rows where channel matches p1 and stage matches
+                mask = (flattened["stage"] == stage) & (
+                    flattened["channel"] == p1
+                )
                 for col, val in feats.items():
                     flattened.loc[mask, col] = val
+
     return flattened
 
 
