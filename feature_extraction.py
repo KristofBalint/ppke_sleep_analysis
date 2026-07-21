@@ -93,6 +93,7 @@ eeg_only_features_3=["sw_density","sw_mean_amp","sw_amp_std","sw_mean_duration",
                       "sw_duration_std","sw_mean_freq","sw_total_duration"]  
 resp_only_features = ['mean_resp_rate', 'resp_variability', 'linear_trend']
 synchrony_only_features = ["r", "ccc", "lag", "peak_lag", "amp_ratio","phase_lock"]
+transition_only_features=["trans_mean_before","trans_mean_after","trans_std_before","trans_std_after","trans_recovery","trans_variability_change"]
 annotation_only_features=["ahi_auto","arousal_auto","limb_auto","w_pct","r_pct","n1_pct","n2_pct","n3_pct","efficiency","prob_w","prob_n3","prob_arous"] 
 ALL_FEATURE_COLUMNS = list(
     set(metadata + generic_features + synchrony_only_features + emg_only_features +
@@ -121,7 +122,7 @@ FEATURES_TO_USE = [c for c in ALL_FEATURE_COLUMNS if
 VALID_STAGE_NAMES = list(STAGE_MAP.values()) + ["All"]
 
 
-def get_master_feature_names(category_lookup, max_transitions=100):
+def get_master_feature_names(category_lookup):
     """
     Generates consistent column names containing transition_id.
     Format: category-channel-stage-transition_id-feature
@@ -131,12 +132,8 @@ def get_master_feature_names(category_lookup, max_transitions=100):
         cat = category_lookup.get(ch)
         if cat in valid_features:
             for stage in VALID_STAGE_NAMES:
-                # Include transition IDs from 0 to max_transitions - 1
-                for trans_id in range(max_transitions):
-                    for feat in valid_features[cat]:
-                        MASTER_FEATURE_NAMES.append(
-                            f"{cat}-{ch}-{stage}-{trans_id}-{feat}"
-                        )
+              for feat in valid_features[cat]:
+                MASTER_FEATURE_NAMES.append(f"{cat}-{ch}-{stage}-{feat}")
     return MASTER_FEATURE_NAMES
 
 
@@ -888,108 +885,104 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
     return row_dict
 
 
-def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None, processed=True):
+def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None, processed=True,aggregate=True):
     try:
-        data, _ = raw_psg[ch_name]
-        data = data.ravel()
-        fs = raw_psg.info["sfreq"]
+      data, _ = raw_psg[ch_name]
+      data = data.ravel()
+      fs = raw_psg.info["sfreq"]
     
-        data = data[~np.isnan(data)]
-        if len(data) < 10:
-            return None
+      data = data[~np.isnan(data)]
+      if len(data) < 10:
+        return None
     
-        category = category_lookup.get(ch_name, "unknown")
+      category = category_lookup.get(ch_name, "unknown")
     
-        if hypnogram is None:
-            res = extract_features(data, fs, ch_name, category, None, processed)
-            return [{**res, "stage": "All", "transition_id": 0, "transition_type": "None"}] if res else []
+      if hypnogram is None:
+        res = extract_features(data, fs, ch_name, category, None, processed)
+        return [{**res, "stage": "All", "transition_id": 0, "transition_type": "None"}] if res else []
     
-        # Align hypnogram and data
-        hypnogram_expanded = np.repeat(hypnogram, int(fs * 30))
-        min_len = min(len(data), len(hypnogram_expanded))
-        data = data[:min_len]
-        hypnogram_expanded = hypnogram_expanded[:min_len]
+      # Align hypnogram and data
+      hypnogram_expanded = np.repeat(hypnogram, int(fs * 30))
+      min_len = min(len(data), len(hypnogram_expanded))
+      data = data[:min_len]
+      hypnogram_expanded = hypnogram_expanded[:min_len]
     
-        # Find where stages change in the expanded hypnogram
-        # This gives us the boundaries of continuous blocks
-        stage_changes = np.where(np.diff(hypnogram_expanded) != 0)[0]
+      # Find where stages change in the expanded hypnogram, this gives us the boundaries of continuous blocks
+      stage_changes = np.where(np.diff(hypnogram_expanded) != 0)[0]
+      block_boundaries = [0] + list(stage_changes + 1) + [min_len]
         
-        # Block boundaries: from 0 to the first change, then change to change, up to the end
-        block_boundaries = [0] + list(stage_changes + 1) + [min_len]
-        
-        stage_results = []
-        transition_counter = 0
+      stage_results = []
+      transition_counter = 0
     
-        # Iterate through continuous blocks chronologically
-        for i in range(len(block_boundaries) - 1):
-            start_idx = block_boundaries[i]
-            end_idx = block_boundaries[i + 1]
+      # Iterate through continuous blocks chronologically
+      for i in range(len(block_boundaries) - 1):
+        start_idx = block_boundaries[i]
+        end_idx = block_boundaries[i + 1]
             
-            stage_val = hypnogram_expanded[start_idx]
-            if stage_val not in STAGE_MAP:
-                continue  # Skip undefined stages
+        stage_val = hypnogram_expanded[start_idx]
+        if stage_val not in STAGE_MAP:
+          continue  # Skip undefined stages
                 
-            stage_name = STAGE_MAP[stage_val]
+        stage_name = STAGE_MAP[stage_val]
             
-            # Determine transition type
-            if end_idx < min_len:
-                next_stage_val = hypnogram_expanded[end_idx]
-                next_stage_name = STAGE_MAP.get(next_stage_val, "Unknown")
-                transition_type = f"{stage_name}_to_{next_stage_name}"
-            else:
-                transition_type = f"{stage_name}_to_End"
+        # Determine transition type
+        if end_idx < min_len:
+          next_stage_val = hypnogram_expanded[end_idx]
+          next_stage_name = STAGE_MAP.get(next_stage_val, "Unknown")
+          transition_type = f"{stage_name}_to_{next_stage_name}"
+        else:
+          transition_type = f"{stage_name}_to_End"
     
             # Slice data for this specific continuous block
-            block_data = data[start_idx:end_idx]
-            block_hypno = hypnogram_expanded[start_idx:end_idx]
+        block_data = data[start_idx:end_idx]
+        block_hypno = hypnogram_expanded[start_idx:end_idx]
     
-            if len(block_data) < 5: 
-                continue
+        if len(block_data) < 5: 
+          continue
     
-            # 1. Extract static features for this block
-            features = extract_features(block_data, fs, ch_name, category, block_hypno, processed)
+        features = extract_features(block_data, fs, ch_name, category, block_hypno, processed)
             
-            if features:
-                features["stage"] = stage_name
-                features["transition_id"] = transition_counter
-                features["transition_type"] = transition_type
+        if features:
+          features["stage"] = stage_name
+          features["transition_id"] = transition_counter
+          features["transition_type"] = transition_type
                 
-                # 2. Extract transition dynamic features around the boundary (end_idx)
-                # We pass the full data stream so it can peek ahead into the next stage
-                trans_features = extract_local_transition_features(
-                    data=data, 
-                    boundary_idx=end_idx, 
-                    fs=fs, 
-                    window_sec=60
-                )
                 
-                # Merge the static block features with the dynamic transition features
-                features.update(trans_features)
-                stage_results.append(features)
+          trans_features = extract_local_transition_features(data=data,boundary_idx=end_idx,fs=fs, window_sec=60)
                 
-            transition_counter += 1
+          # Merge the static block features with the dynamic transition features
+          features.update(trans_features)
+          stage_results.append(features)
+                
+        transition_counter += 1
     
+      if not aggregate:
         return stage_results
+      else:
+        df = pd.DataFrame(stage_results)
+        normal_cols = [c for c in df.columns if c not in (["transition_id", "transition_type"] +transition_only_features    )]
+        normal_df = (df.groupby("stage")[normal_cols].mean().reset_index())
+        transition_df = (df.groupby(["stage", "transition_type"])[transition_only_features].mean().reset_index())
+        merged = transition_df.merge(normal_df,on="stage",how="left")
+        merged["transition_id"] = -1
+        
+        return merged.to_dict("records")
+                
     except Exception as e:
-        print(f"Something went wrong in channel processing for {ch_name}: {e}")
+      print(f"Something went wrong in channel processing for {ch_name}: {e}")
+      # Fallback: construct default single-row DataFrame filled with zeros
+      try:
+        master_feature_names = get_master_feature_names(category_lookup)
+        fallback_dict = {feat: 0.0 for feat in master_feature_names}
+      except Exception:
+        fallback_dict = {}
 
-        # Fallback: construct default single-row DataFrame filled with zeros
-        try:
-            master_feature_names = get_master_feature_names(category_lookup)
-            fallback_dict = {feat: 0.0 for feat in master_feature_names}
-        except Exception:
-            fallback_dict = {}
+      fallback_dict["channel"] = ch_name
+      fallback_dict["stage"] = "All"
+      fallback_dict["transition_id"] = 0
+      fallback_dict["transition_type"] = "None"
 
-        fallback_dict["channel"] = ch_name
-        fallback_dict["stage"] = "All"
-        fallback_dict["transition_id"] = 0
-        fallback_dict["transition_type"] = "None"
-
-        return pd.DataFrame([fallback_dict])
-
-
-import pandas as pd
-from joblib import Parallel, delayed
+      return pd.DataFrame([fallback_dict])
 
 
 def assess_signal_quality(raw_psg, category_lookup, hypnogram=None, processed=True):
