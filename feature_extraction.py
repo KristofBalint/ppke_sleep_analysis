@@ -520,13 +520,11 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
                 row_dict["spindle_mean_amp"] = sp_summary["Amplitude"].mean()
                 row_dict["spindle_amp_std"] = sp_summary["Amplitude"].std()
 
-                row_dict["spindle_mean_duration"] = sp_summary[
-                    "Duration"].mean()
+                row_dict["spindle_mean_duration"] = sp_summary["Duration"].mean()
                 row_dict["spindle_duration_std"] = sp_summary["Duration"].std()
 
                 row_dict["spindle_mean_freq"] = sp_summary["Frequency"].mean()
-                row_dict["spindle_mean_relpower"] = sp_summary[
-                    "RelPower"].mean()
+                row_dict["spindle_mean_relpower"] = sp_summary["RelPower"].mean()
                 row_dict["spindle_mean_rms"] = sp_summary["RMS"].mean()
 
                 row_dict["spindle_total_duration"] = sp_summary[
@@ -961,8 +959,8 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None, processed
       else:
         df = pd.DataFrame(stage_results)
         normal_cols = [c for c in df.columns if c not in (["transition_id", "transition_type"] +transition_only_features    )]
-        normal_df = (df.groupby("stage")[normal_cols].mean().reset_index())
-        transition_df = (df.groupby(["stage", "transition_type"])[transition_only_features].mean().reset_index())
+        normal_df = (df.groupby("stage")[normal_cols].mean(numeric_only=True).reset_index())
+        transition_df = (df.groupby(["stage", "transition_type"])[transition_only_features].mean(numeric_only=True).reset_index())
         merged = transition_df.merge(normal_df,on="stage",how="left")
         merged["transition_id"] = -1
         
