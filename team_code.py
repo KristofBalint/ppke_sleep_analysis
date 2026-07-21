@@ -131,6 +131,11 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 csv_path=csv_path, category_lookup=category_lookup,
                 hypnogram=hypno,patient_id=patient_id,session_id=session_id)  # This function can rename, re-reference, resample, etc. the signal data.
 
+            pd.DataFrame({
+                "patient":[patient_id]
+            }).to_csv(backup,mode="a",header=not header_written,index=False)
+
+            header_written = True
             # Load the human annotations; these data will not be available in the hidden validation and test sets.
             human_annotations_file = os.path.join(data_folder,
                                                   HUMAN_ANNOTATIONS_SUBFOLDER,
@@ -177,8 +182,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 feat_df["W_prob"]=algorithmic_features[9]
                 feat_df["N3_prob"]=algorithmic_features[10]
                 feat_df["Ar_prob"]=algorithmic_features[11]
-                feat_df.to_csv(backup,mode="a",header=not header_written,index=False)
-                header_written=True
+                #feat_df.to_csv(backup,mode="a",header=not header_written,index=False)
+                #header_written=True
                 features.append(feat_df)
                 #features.append(np.hstack(    [demographic_features, physiological_vector,algorithmic_features]))
                 labels.append(label)
