@@ -423,7 +423,7 @@ def run_model(model, record, data_folder, verbose):
     feat_df["W_prob"]=algorithmic_features[9]
     feat_df["N3_prob"]=algorithmic_features[10]
     feat_df["Ar_prob"]=algorithmic_features[11]
-    features=feat_df[feature_list].to_numpy.flatten().astype(np.float32)
+    features=feat_df[feature_list].to_numpy().flatten().astype(np.float32)
 
     #features = np.hstack([demographic_features, physiological_features,algorithmic_features]).reshape(1, -1)
 
