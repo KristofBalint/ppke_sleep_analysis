@@ -755,13 +755,13 @@ def extract_features(data, fs, ch_name, category,subject_id,session_id, stage_id
             row_dict["HF_NORM"] = hrv_biomarker["HF_NORM"]
             row_dict["LF_HF_RATIO"] = hrv_biomarker["LF_HF_RATIO"]
             # print("HRV feature calculations done")
-            time_6 = time.perf_counter()
+            #time_6 = time.perf_counter()
             #print(f"ECG claculation time: {time_6 - time_5}")
             #print(f"Total time: {time_6 - time_1}")
 
-        savable=row_dict.copy()
-        savable=savable.reindex(valid_features["ecg"])
-        savable.to_csv("backup_ecg.csv",mode="a",header=False,index=False)
+            savable=row_dict.copy()
+            savable=savable.reindex(valid_features["ecg"])
+            savable.to_csv("backup_ecg.csv",mode="a",header=False,index=False)
         except Exception as e:
             print(f"ECG extraction error: {e}")
             traceback.print_exc()
@@ -811,7 +811,7 @@ def extract_features(data, fs, ch_name, category,subject_id,session_id, stage_id
             row_dict["num_peaks"] = tsf.number_peaks(data, n=3)
             time_8 = time.perf_counter()
             savable=row_dict.copy()
-            savable=savable.reindex(valid_features["leg_emg"])
+            savable=savable.reindex(valid_features["leg emg"])
             savable.to_csv("backup_emg.csv",mode="a",header=False,index=False)
         except Exception as e:
             print(f"EMG extraction error: {e}")
