@@ -125,8 +125,8 @@ VALID_STAGE_NAMES = list(STAGE_MAP.values()) + ["All"]
 
 def get_master_feature_names(category_lookup):
     """
-    Generates consistent column names containing transition_id.
-    Format: category-channel-stage-transition_id-feature
+    Generates consistent column names containing id.
+    Format: category-channel-stage-id-feature
     """
     MASTER_FEATURE_NAMES = []
     for ch in UNIQUE_CHANNELS:
@@ -365,7 +365,7 @@ def process_synchrony_pair(pair, raw_psg, STAGE_MAP, hypnogram):
     return pair_results
 
 # 3.6 Stage transition helper functions
-def extract_local_transition_features(data, boundary_idx, fs, window_sec=60):
+def extract_local_features(data, boundary_idx, fs, window_sec=60):
     """
     Calculates generic transition features around a single specific boundary point.
     """
@@ -393,7 +393,7 @@ def extract_local_transition_features(data, boundary_idx, fs, window_sec=60):
     }
 
 
-def extract_features(data, fs, ch_name, category,subject_id,session_id, hypnogram_subset=None,processed=True):
+def extract_features(data, fs, ch_name, category,subject_id,session_id, stage,id,transition_id,transition_type, hypnogram_subset=None,processed=True):
     """
     Extracts features of a single channel in a category dependent manner. Every channel has generic features, 
     and category dependent features with the exception of EOG channels.
@@ -419,6 +419,9 @@ def extract_features(data, fs, ch_name, category,subject_id,session_id, hypnogra
         "session": session_id,
         "channel": ch_name,
         "category": category,
+        "stage": stage,
+        "transition_id":transition_id,
+        "transition_type":transition_type,
         "flatline_pct": np.mean(np.abs(np.diff(data)) < 1e-6),
         "clipping_pct": np.mean((data == data.min()) | (data == data.max()))
     })
@@ -679,8 +682,7 @@ def extract_features(data, fs, ch_name, category,subject_id,session_id, hypnogra
         # print("Calculating ecg features")
         time_5 = time.perf_counter()
         row_dict["cid_ce"] = tsf.cid_ce(data, normalize=True)
-        row_dict["mean_2nd_deriv_central"] = tsf.mean_second_derivative_central(
-            data)
+        row_dict["mean_2nd_deriv_central"] = tsf.mean_second_derivative_central(data)
         # row_dict["sample_entropy"] = tsf.sample_entropy(data)
 
         #row_dict["rms"] = rms_amplitude(data)
@@ -967,19 +969,28 @@ def process_channel(ch_name, raw_psg, category_lookup, subject_id,session_id, hy
         if len(block_data) < 5: 
           continue
     
-        features = extract_features(block_data, fs, ch_name, category,subject_id,session_id, block_hypno, processed)
+        features = extract_features(block_data, fs, ch_name, category, subject_id,session_id, stage_name,transition_counter,transition_type, block_hypno, processed)
+        trans_features = extract_local_transition_features(data=data,boundary_idx=end_idx,fs=fs, window_sec=60)
+        if trans_features:
+            trans_row = {
+                "subject": subject_id,
+                "session": session_id,
+                "channel": ch_name,
+                "stage": stage_name,
+                "category": category,
+                "transition_id": transition_counter,
+                "transition_type": transition_type,
+                **trans_features
+            }
             
-        if features:
-          features["stage"] = stage_name
-          features["transition_id"] = transition_counter
-          features["transition_type"] = transition_type
-                
-                
-          trans_features = extract_local_transition_features(data=data,boundary_idx=end_idx,fs=fs, window_sec=60)
-                
-          # Merge the static block features with the dynamic transition features
-          features.update(trans_features)
-          stage_results.append(features)
+            # Immediately append transition features to CSV
+            trans_headers = metadata + transition_only_features
+            trans_df = pd.DataFrame([trans_row]).reindex(columns=trans_headers)
+            trans_df.to_csv("backup_transitions.csv", mode="a", header=False, index=False)
+          
+        # Merge the static block features with the dynamic transition features
+        features.update(trans_features)
+        stage_results.append(features)
                 
         transition_counter += 1
     
@@ -1039,6 +1050,16 @@ def assess_signal_quality(raw_psg, category_lookup, subject_id,session_id, hypno
                 writer = csv.writer(f)
                 writer.writerow(headers)
             print(f"Initialized {filepath} with {len(headers)} columns.")
+        trans_filepath = "backup_transitions.csv"
+        if not os.path.exists(trans_filepath):
+            trans_headers = metadata + transition_only_features
+            with open(trans_filepath, mode="w", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow(trans_headers)
+        sync_filepath = "backup_synchrony.csv"
+        if not os.path.exists(sync_filepath):
+            sync_headers = ["subject", "session", "channel", "stage", "transition_id", "transition_type"] + synchrony_only_features
+            with open(sync_filepath, mode="w", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow(sync_headers)
         #actually processing the channels
         results = Parallel(n_jobs=4, prefer="threads")(
             delayed(process_channel)(
@@ -1101,22 +1122,33 @@ def assess_signal_quality(raw_psg, category_lookup, subject_id,session_id, hypno
         ]
 
         if sync_flattened:
-            # Map synchrony results back to the main dataframe
+            sync_rows = []
             for res in sync_flattened:
                 p1, p2 = res["pair"]
                 stage = res["stage"]
-                feats = {
-                    k: v
-                    for k, v in res.items()
-                    if k not in ["pair", "stage"]
-                }
-
-                # Update rows where channel matches p1 and stage matches
-                mask = (flattened["stage"] == stage) & (
-                    flattened["channel"] == p1
-                )
+                feats = {k: v for k, v in res.items() if k not in ["pair", "stage"]}
+        
+                # Append to main dataframe in memory
+                mask = (flattened["stage"] == stage) & (flattened["channel"] == p1)
                 for col, val in feats.items():
                     flattened.loc[mask, col] = val
+                
+                # Build independent row for backup
+                sync_rows.append({
+                    "subject": subject_id,
+                    "session": session_id,
+                    "channel": p1,
+                    "stage": stage,
+                    "transition_id": -1,  # Standard placeholder for stage-level synchrony
+                    "transition_type": "None",
+                    **feats
+                })
+        
+            # Immediately write synchrony features to disk
+            if sync_rows:
+                sync_headers = ["subject", "session", "channel", "stage", "transition_id", "transition_type"] + synchrony_only_features
+                sync_df = pd.DataFrame(sync_rows).reindex(columns=sync_headers)
+                sync_df.to_csv("backup_synchrony.csv", mode="a", header=False, index=False)
 
     return flattened
 
