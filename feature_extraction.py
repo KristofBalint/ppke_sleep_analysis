@@ -365,7 +365,7 @@ def process_synchrony_pair(pair, raw_psg, STAGE_MAP, hypnogram):
     return pair_results
 
 # 3.6 Stage transition helper functions
-def extract_local_features(data, boundary_idx, fs, window_sec=60):
+def extract_local_transition_features(data, boundary_idx, fs, window_sec=60):
     """
     Calculates generic transition features around a single specific boundary point.
     """
@@ -393,7 +393,7 @@ def extract_local_features(data, boundary_idx, fs, window_sec=60):
     }
 
 
-def extract_features(data, fs, ch_name, category,subject_id,session_id, stage,id,transition_id,transition_type, hypnogram_subset=None,processed=True):
+def extract_features(data, fs, ch_name, category,subject_id,session_id, stage_id,transition_id,transition_type, hypnogram_subset=None,processed=True):
     """
     Extracts features of a single channel in a category dependent manner. Every channel has generic features, 
     and category dependent features with the exception of EOG channels.
