@@ -203,14 +203,75 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     params = {'max_depth': 7, 'learning_rate': 0.030842680992267595, 'n_estimators': 963, 'subsample': 0.668562285184131, 'colsample_bytree': 0.6664590708996059, 'gamma': 1.0645185377275237, 'min_child_weight': 16, 'reg_alpha': 0.0600354240141498, 'reg_lambda': 35.771321493090454}
 
     print(f"DEBUG: shape of features {len(features)}")
-    if len(features)>0:
-        full_df = pd.concat(features, ignore_index=True)
-    elif os.path.exists(backup):#checks if even exists
-        full_df = pd.read_csv(backup)
+
+    if len(features) > 0:
+    full_df = pd.concat(features, ignore_index=True)
     else:
-        raise RuntimeError(
-            "No successful patients and backup.csv was never created."
+        # List of all required backup CSVs
+        required_backups = [
+            "backup_eeg.csv", "backup_emg.csv", "backup_ecg.csv", 
+            "backup_resp.csv", "backup_eog.csv", "backup_transitions.csv", 
+            "backup_synchrony.csv"
+        ]
+        
+        # Check if any backup files are missing and raise a specific exception
+        missing_backups = [b for b in required_backups if not os.path.exists(b)]
+        if missing_backups:
+            raise RuntimeError(
+                f"Extraction failed! The following backup CSV files were NOT created/found: {missing_backups}"
+            )
+        
+        print("In-memory extraction produced no features. Reconstructing full_df from backup CSVs...")
+    
+        # 1. Load base signal CSVs
+        dfs = []
+        for cat_file in ["backup_eeg.csv", "backup_emg.csv", "backup_ecg.csv", "backup_resp.csv", "backup_eog.csv"]:
+            df_cat = pd.read_csv(cat_file)
+            if not df_cat.empty:
+                dfs.append(df_cat)
+    
+        if not dfs:
+            raise RuntimeError("Backup CSV files exist but are all empty.")
+            
+        combined_signal_df = pd.concat(dfs, ignore_index=True)
+    
+    
+        trans_df = pd.read_csv("backup_transitions.csv")
+        if not trans_df.empty:
+            merge_keys = ["subject", "session", "channel", "stage", "transition_id", "transition_type"]
+            combined_signal_df = combined_signal_df.merge(trans_df, on=merge_keys, how="left", suffixes=("", "_dup"))
+            combined_signal_df = combined_signal_df.loc[:, ~combined_signal_df.columns.str.endswith("_dup")]
+    
+     
+        sync_df = pd.read_csv("backup_synchrony.csv")
+        if not sync_df.empty:
+            sync_keys = ["subject", "session", "channel", "stage"]
+            combined_signal_df = combined_signal_df.merge(sync_df, on=sync_keys, how="left", suffixes=("", "_dup"))
+            combined_signal_df = combined_signal_df.loc[:, ~combined_signal_df.columns.str.endswith("_dup")]
+    
+        # 4. Pivot and rename (identical to extract_physiological_features logic)
+        quality_df = combined_signal_df.reindex(columns=ALL_FEATURE_COLUMNS)
+        feature_df = quality_df.pivot(
+            index=['subject', 'session'],
+            columns=['category', 'channel', 'stage', 'transition_id']
         )
+    
+        valid_cols = [col for col in feature_df.columns if col[0] in valid_features.get(col[1], [])]
+        feature_df = feature_df[valid_cols]
+    
+        feature_df.columns = [
+            f"{col[1]}-{col[2]}-{col[3]}-{col[4]}-{col[0]}" if isinstance(col, tuple) else col
+            for col in feature_df.columns.values
+        ]
+    
+        MASTER_FEATURE_NAMES = get_master_feature_names(category_lookup)
+        feature_df = feature_df.reindex(columns=MASTER_FEATURE_NAMES, fill_value=np.nan)
+    
+        feature_df["subject"] = feature_df.index.get_level_values(0)
+        feature_df["session"] = feature_df.index.get_level_values(1)
+    
+        full_df = feature_df.reset_index(drop=True)
+        
     y = full_df["Cognitive_Impairment"]
     ranked_features = stratified_pca_feature_selection(full_df, y, params)
 
