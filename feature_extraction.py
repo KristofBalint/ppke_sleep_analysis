@@ -1002,6 +1002,8 @@ def process_channel(ch_name, raw_psg, category_lookup, subject_id,session_id, hy
         normal_df = (df.groupby("stage")[normal_cols].mean(numeric_only=True).reset_index())
         transition_df = (df.groupby(["stage", "transition_type"])[transition_only_features].mean(numeric_only=True).reset_index())
         merged = transition_df.merge(normal_df,on="stage",how="left")
+        merged["category"]=category
+        merged["channel"]=ch_name
         merged["transition_id"] = -1
         
         return merged.to_dict("records")
