@@ -205,7 +205,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     print(f"DEBUG: shape of features {len(features)}")
 
     if len(features) > 0:
-    full_df = pd.concat(features, ignore_index=True)
+        full_df = pd.concat(features, ignore_index=True)
     else:
         # List of all required backup CSVs
         required_backups = [
