@@ -25,6 +25,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import GroupShuffleSplit, GroupKFold
 from sklearn import metrics
+import csv
 import traceback
 
 unfuck_old()
@@ -392,7 +393,7 @@ def extract_local_transition_features(data, boundary_idx, fs, window_sec=60):
     }
 
 
-def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processed=True):
+def extract_features(data, fs, ch_name, category,subject_id,session_id, hypnogram_subset=None,processed=True):
     """
     Extracts features of a single channel in a category dependent manner. Every channel has generic features, 
     and category dependent features with the exception of EOG channels.
@@ -414,6 +415,8 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
 
     row_dict = extract_tsfresh_generic(data)
     row_dict.update({
+        "subject": subject_id,
+        "session": session_id,
         "channel": ch_name,
         "category": category,
         "flatline_pct": np.mean(np.abs(np.diff(data)) < 1e-6),
@@ -527,9 +530,9 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
                 row_dict["spindle_mean_relpower"] = sp_summary["RelPower"].mean()
                 row_dict["spindle_mean_rms"] = sp_summary["RMS"].mean()
 
-                row_dict["spindle_total_duration"] = sp_summary[
-                    "Duration"].sum()
+                row_dict["spindle_total_duration"] = sp_summary["Duration"].sum()
 
+                
             else:
                 print("The sp was None")
                 row_dict["spindle_count"] = 0
@@ -582,9 +585,11 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
 
                     row_dict["sw_spindle_delay_mean"] = coupled[
                         "SpindleDelay"].mean()
-                    row_dict["sw_spindle_delay_std"] = coupled[
-                        "SpindleDelay"].std()
+                    row_dict["sw_spindle_delay_std"] = coupled["SpindleDelay"].std()
 
+                    savable=row_dict.copy()
+                    savable=savable.reindex(valid_features["ecg"])
+                    savable.to_csv("backup_ecg.csv",mode="a",header=False,index=False)
                 else:
 
                     row_dict["sw_count"] = 0
@@ -602,6 +607,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
                     row_dict["sw_spindle_phase_std"] = 0
                     row_dict["sw_spindle_delay_mean"] = 0
                     row_dict["sw_spindle_delay_std"] = 0
+                   
             else:
 
                 row_dict["sw_count"] = 0
@@ -619,10 +625,14 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
                 row_dict["sw_spindle_phase_std"] = 0
                 row_dict["sw_spindle_delay_mean"] = 0
                 row_dict["sw_spindle_delay_std"] = 0
+                
             time_4 = time.perf_counter()
             #print(f"EEG calculation time: {time_4 - time_3}")
             #print(f"Total calculation time: {time_4 - time_1}")
-
+            savable=row_dict.copy()
+            savable=savable.reindex(valid_features["eeg"])
+            savable.to_csv("backup_eeg.csv",mode="a",header=False,index=False)
+        
         except Exception as e:
             print(f"EEG extraction error: {e}")
             traceback.print_exc()
@@ -658,6 +668,9 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
             row_dict["sw_spindle_phase_std"] = 0
             row_dict["sw_spindle_delay_mean"] = 0
             row_dict["sw_spindle_delay_std"] = 0
+            savable=row_dict.copy()
+            savable=savable.reindex(valid_features["eeg"])
+            savable.to_csv("backup_eeg.csv",mode="a",header=False,index=False)
 
     # -----------------------------
     # ECG-specific Features
@@ -744,6 +757,9 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
             #print(f"ECG claculation time: {time_6 - time_5}")
             #print(f"Total time: {time_6 - time_1}")
 
+        savable=row_dict.copy()
+        savable=savable.reindex(valid_features["ecg"])
+        savable.to_csv("backup_ecg.csv",mode="a",header=False,index=False)
         except Exception as e:
             print(f"ECG extraction error: {e}")
             traceback.print_exc()
@@ -772,8 +788,9 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
             row_dict["LF_NORM"] = np.nan
             row_dict["HF_NORM"] = np.nan
             row_dict["LF_HF_RATIO"] = np.nan
-
-
+            savable=row_dict.copy()
+            savable=savable.reindex(valid_features["ecg"])
+            savable.to_csv("backup_ecg.csv",mode="a",header=False,index=False)
 
     # -----------------------------
     # EMG-specific Features
@@ -791,6 +808,9 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
                                                      "segment_focus": 5}])[0][1]
             row_dict["num_peaks"] = tsf.number_peaks(data, n=3)
             time_8 = time.perf_counter()
+            savable=row_dict.copy()
+            savable=savable.reindex(valid_features["leg_emg"])
+            savable.to_csv("backup_emg.csv",mode="a",header=False,index=False)
         except Exception as e:
             print(f"EMG extraction error: {e}")
             traceback.print_exc()
@@ -800,7 +820,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
     # Respiratory Features
     # -----------------------------
     elif category == "resp":
-        time_9 = time.perf_counter()
+        #time_9 = time.perf_counter()
         try:
             # print("Calculating respiratory features")
             if ch_name == "spo2":
@@ -826,11 +846,13 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
 
             row_dict["mean_resp_rate"] = mean_rr
             row_dict["resp_variability"] = resp_var
-            row_dict["linear_trend"] = \
-                tsf.linear_trend(data, param=[{"attr": "slope"}])[0][1]
+            row_dict["linear_trend"] = tsf.linear_trend(data, param=[{"attr": "slope"}])[0][1]
+            savable=row_dict.copy()
+            savable=savable.reindex(valid_features["resp"])
+            savable.to_csv("backup_resp.csv",mode="a",header=False,index=False)
             # row_dict["approx_entropy"] = tsf.approximate_entropy(data, m=2,r=2 * std_val)
             # currently problematic due to using an old scipy version
-            time_10 = time.perf_counter()
+            #time_10 = time.perf_counter()
             #print(f"Respiratory feature calculations time:{time_10 - time_9}")
             #print(f"Total time: {time_10 - time_1}")
             '''
@@ -866,6 +888,9 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
             row_dict["mean_resp_rate"] = np.nan
             row_dict["resp_variability"] = np.nan
             row_dict["linear_trend"] = np.nan
+            savable=row_dict.copy()
+            savable=savable.reindex(valid_features["resp"])
+            savable.to_csv("backup_resp.csv",mode="a",header=False,index=False)
             # row_dict["approx_entropy"] = np.nan
             '''
             for col in [
@@ -880,10 +905,14 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,processe
             ]:
                 row_dict[col] = 0
             '''
+    elif category=="eog":
+        savable=row_dict.copy()
+        savable=savable.reindex(valid_features["eog"])
+        savable.to_csv("backup_eog.csv",mode="a",header=False,index=False)
     return row_dict
 
 
-def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None, processed=True,aggregate=True):
+def process_channel(ch_name, raw_psg, category_lookup, subject_id,session_id, hypnogram=None, processed=True,aggregate=True):
     try:
       data, _ = raw_psg[ch_name]
       data = data.ravel()
@@ -938,7 +967,7 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None, processed
         if len(block_data) < 5: 
           continue
     
-        features = extract_features(block_data, fs, ch_name, category, block_hypno, processed)
+        features = extract_features(block_data, fs, ch_name, category,subject_id,session_id, block_hypno, processed)
             
         if features:
           features["stage"] = stage_name
@@ -983,7 +1012,7 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None, processed
       return pd.DataFrame([fallback_dict])
 
 
-def assess_signal_quality(raw_psg, category_lookup, hypnogram=None, processed=True):
+def assess_signal_quality(raw_psg, category_lookup, subject_id,session_id, hypnogram=None, processed=True):
     """Two part assessment of signal quality.
 
     First it processes each channel of the polysomnographic data in parallel.
@@ -995,9 +1024,25 @@ def assess_signal_quality(raw_psg, category_lookup, hypnogram=None, processed=Tr
     :processed: determines if the dataset was normalised or not
     """
     try:
+        #creating backup files
+        category_features = {
+            "emg": list(set(valid_features["leg emg"] + valid_features["chin emg"])),
+            "eeg": valid_features["eeg"],
+            "ecg": valid_features["ecg"],
+            "resp": valid_features["resp"],
+            "eog": valid_features["eog"],
+        }
+        for category, features in category_features.items():
+            headers = metadata + list(dict.fromkeys(features))
+            filepath = f"backup_{category}.csv"
+            with open(filepath, mode="w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+            print(f"Initialized {filepath} with {len(headers)} columns.")
+        #actually processing the channels
         results = Parallel(n_jobs=4, prefer="threads")(
             delayed(process_channel)(
-                ch, raw_psg, category_lookup, hypnogram, processed
+                ch, raw_psg, category_lookup,subject_id,session_id, hypnogram, processed
             )
             for ch in raw_psg.ch_names
         )
