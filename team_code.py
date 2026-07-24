@@ -464,10 +464,9 @@ def extract_physiological_features(physiological_data, physiological_fs,
             return sig.reshape(1, -1), None
 
     raw_psg = FakeRaw(processed_channels, processed_fs)
-    quality_df = assess_signal_quality(raw_psg, category_lookup,
-                                       hypnogram=hypnogram)
-    quality_df["subject"]=patient_id
-    quality_df["session"]=session_id
+    quality_df = assess_signal_quality(raw_psg, category_lookup,patient_id=patient_id,session_id=session_id,hypnogram=hypnogram)
+    #quality_df["subject"]=patient_id
+    #quality_df["session"]=session_id
     print(f"Shape originally {quality_df.shape}")
     quality_df = quality_df.reindex(columns=ALL_FEATURE_COLUMNS)
     if 'subject' not in quality_df.columns:
