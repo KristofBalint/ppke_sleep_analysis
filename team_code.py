@@ -20,11 +20,14 @@ from helper_code import *
 import pandas as pd
 from feature_extraction import assess_signal_quality, ALL_FEATURE_COLUMNS, \
     get_master_feature_names, UNIQUE_CHANNELS, get_category_map, valid_features, \
-    stratified_pca_feature_selection
+    stratified_pca_feature_selection, feature_debug
 import mne
 from xgboost import XGBClassifier
 from sklearn import metrics
 import traceback
+from utils import DebugMessageCoolector
+
+team_debug=DebugMessageCollector("team_code")
 
 ################################################################################
 # Path & Constant Configuration (Added for Robustness)
@@ -49,6 +52,7 @@ DEFAULT_CSV_PATH = os.path.join(SCRIPT_DIR, 'channel_table.csv')
 # Train your model.
 def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     # Find the data files.
+    team_debug.update_success("entered", message="train_model execution started")
     if verbose:
         print('Finding the Challenge data...')
 
@@ -69,14 +73,14 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
     category_lookup = get_category_map(DEFAULT_CSV_PATH)
 
-    pbar = tqdm(range(num_records), desc="Extracting Features", unit="record",
-                disable=not verbose)
+    pbar = tqdm(range(num_records), desc="Extracting Features", unit="record",disable=not verbose)
     backup="backup.csv"
     if os.path.exists(backup):#If by any accident already exists, removes it
         os.remove(backup)
     header_written=False
     for i in pbar:
         try:
+            team_debug.update_success("start",iteration=i)
             # Extract identifiers for this specific record
             record = patient_metadata_list[i]
             patient_id = record[HEADERS['bids_folder']]
@@ -88,9 +92,10 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
             # Load the patient data.
             patient_data_file = os.path.join(data_folder, DEMOGRAPHICS_FILE)
-            patient_data = load_demographics(patient_data_file, patient_id,
-                                             session_id)
+            patient_data = load_demographics(patient_data_file, patient_id,session_id)
+            team_debug.update_success("patient_loaded",patient_id=patient_id,iteration=i)
             demographic_features = extract_demographic_features(patient_data)
+            team_debug.update_success("demographics loaded",patient_id=patient_id,iteration=i)
 
             # Load signal data.
 
@@ -115,10 +120,12 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 algorithmic_annotations_file)
             algorithmic_features = extract_algorithmic_annotations_features(
                 algorithmic_annotations)
+            team_debug.update_success("algorithmic annotations loaded",patient_id=patient_id,iteration=i)
 
             # Load physiological data
             physiological_data, physiological_fs = load_signal_data(
                 physiological_data_file)
+            team_debug.update_success("physiological loaded", patient_id=patient_id, iteration=i) 
             hypno = None
             if "stage_caisr" in algorithmic_annotations:
                 hypno = algorithmic_annotations["stage_caisr"]
@@ -130,12 +137,12 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 physiological_data, physiological_fs,
                 csv_path=csv_path, category_lookup=category_lookup,
                 hypnogram=hypno,patient_id=patient_id,session_id=session_id)  # This function can rename, re-reference, resample, etc. the signal data.
-
+            team_debug.update_success("feature extraction returned", patient_id=patient_id, iteration=i) 
             pd.DataFrame({
                 "patient":[patient_id]
             }).to_csv(backup,mode="a",header=not header_written,index=False)
-
             header_written = True
+            team_debug.update_success("backup written", patient_id=patient_id, iteration=i)
             # Load the human annotations; these data will not be available in the hidden validation and test sets.
             human_annotations_file = os.path.join(data_folder,
                                                   HUMAN_ANNOTATIONS_SUBFOLDER,
@@ -149,7 +156,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             # Load the diagnoses; these data will not be available in the hidden validation and test sets.
             diagnosis_file = os.path.join(data_folder, DEMOGRAPHICS_FILE)
             label = load_diagnoses(diagnosis_file, patient_id)
-            
+            team_debug.update_success("diagnosis loaded", patient_id=patient_id, iteration=i) 
 
             # Store the features and labels, but
             # the human annotations are not available on the hidden validation and test sets, but you
@@ -185,6 +192,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 #feat_df.to_csv(backup,mode="a",header=not header_written,index=False)
                 #header_written=True
                 features.append(feat_df)
+                team_debug.update_success("patient appended", patient_id=patient_id, iteration=i) 
                 #features.append(np.hstack(    [demographic_features, physiological_vector,algorithmic_features]))
                 labels.append(label)
 
@@ -194,6 +202,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
         except Exception as e:
             # If an error occurs (e.g., a record is corrupted), log it and move to the next
             error_stack=traceback.format_exc()
+            team_debug.update_failure("start", patient_id=patient_id if 'patient_id' in locals() else "Unknown", iteration=i, message=str(e), exc=e) 
             tqdm.write(f"  !!! Error processing record {i + 1} ({patient_id}): {e}")
             tqdm.write(error_stack)
             continue
@@ -206,6 +215,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
     if len(features) > 0:
         full_df = pd.concat(features, ignore_index=True)
+        team_debug.update_success("feature dataframe created", message="Aggregated feature vector complete") 
     else:
         # List of all required backup CSVs
         required_backups = [
@@ -217,8 +227,12 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
         # Check if any backup files are missing and raise a specific exception
         missing_backups = [b for b in required_backups if not os.path.exists(b)]
         if missing_backups:
+            err_msg=(
+                    f"Extraction failed! The following backup CSV files were NOT created/found: {missing_backups}\n"
+                    f"\n--- COLLECTOR DEBUG SUMMARY ---\n{team_debug.summary()}" 
+                )
             raise RuntimeError(
-                f"Extraction failed! The following backup CSV files were NOT created/found: {missing_backups}"
+                err_msg
             )
         
         print("In-memory extraction produced no features. Reconstructing full_df from backup CSVs...")
@@ -231,7 +245,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 dfs.append(df_cat)
     
         if not dfs:
-            raise RuntimeError("Backup CSV files exist but are all empty.")
+            err_msg = f"Backup CSV files exist but are all empty.\n\n--- COLLECTOR DEBUG SUMMARY ---\n{team_debug.summary()}"
+            raise RuntimeError(err_msg)
             
         combined_signal_df = pd.concat(dfs, ignore_index=True)
     
@@ -271,6 +286,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
         feature_df["session"] = feature_df.index.get_level_values(1)
     
         full_df = feature_df.reset_index(drop=True)
+        team_debug.update_success("feature dataframe created", message="Reconstructed feature vector from backup files complete") 
         
     y = full_df["Cognitive_Impairment"]
     ranked_features = stratified_pca_feature_selection(full_df, y, params)
@@ -325,6 +341,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     print(X_np.shape)
     print(y_np.shape)
 
+    team_debug.update_success("training started",message="Starting model fitting")
     model = XGBClassifier(
         **params,
         objective="binary:logistic",
@@ -494,6 +511,7 @@ def extract_physiological_features(physiological_data, physiological_fs,
     """
     Standardizes channels and extracts statistical/spectral features.
     """
+    feature_debug.update_success("extract_physiological_features", patient_id=patient_id, message="Starting physiological extraction") 
     original_labels = list(physiological_data.keys())
 
     # Step 1: Load rules and standardize names
@@ -513,6 +531,8 @@ def extract_physiological_features(physiological_data, physiological_fs,
         # Mapping the sampling rate to the new label
         processed_fs[new_label] = physiological_fs.get(old_label,200.0)  # Default to 200 if missing
 
+    feature_debug.update_success("channels standardized", patient_id=patient_id, message="Renamed channels standard")
+		
     class FakeRaw:
         def __init__(self, data_dict, fs_dict):
             self._data = data_dict
@@ -537,6 +557,7 @@ def extract_physiological_features(physiological_data, physiological_fs,
     print(f"Shape after reindexing {quality_df.shape}")
     feature_df = quality_df.pivot(index=['subject', 'session'],
                                   columns=['category','channel', 'stage','transition_id'])
+    feature_debug.update_success("pivot complete", patient_id=patient_id, message="Pivot transformation matrix constructed")                                 
     print(f"Shape after pivoting {feature_df.shape}")
     valid_cols=[col for col in feature_df.columns
                 if col[0] in valid_features.get(col[1],[])]
@@ -551,7 +572,7 @@ def extract_physiological_features(physiological_data, physiological_fs,
 
     feature_df["subject"] = feature_df.index.get_level_values(0)
     feature_df["session"] = feature_df.index.get_level_values(1)
-
+    feature_debug.update_success("reindex complete", patient_id=patient_id, message="Feature columns reindexed to master format")
     return feature_df.reset_index(drop=True)
 
 
