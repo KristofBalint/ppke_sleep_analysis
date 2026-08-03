@@ -45,6 +45,7 @@ def get_category_map(csv_path):
 # Create the map once
 # category_lookup = get_category_map('channel_table.csv')
 
+feature_debug = DebugMessageCollector("feature_extraction")
 
 DATA_TYPES = {
     "physiological": "",
