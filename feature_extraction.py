@@ -899,7 +899,6 @@ def assess_signal_quality(raw_psg, category_lookup, subject_id, session_id, hypn
 
     return flattened
 
-
 def stratified_pca_feature_selection(df, y, params):
     base_meta_cols = ['BMI', 'Age', 'Race_Asian', 'Race_Black',
                       'Race_Others', 'Race_Unavailable',
