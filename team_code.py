@@ -25,7 +25,7 @@ import mne
 from xgboost import XGBClassifier
 from sklearn import metrics
 import traceback
-from utils import DebugMessageCoolector
+from utils import DebugMessageCollector
 
 team_debug=DebugMessageCollector("team_code")
 
