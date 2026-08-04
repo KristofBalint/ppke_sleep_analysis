@@ -58,15 +58,22 @@ STAGE_MAP = {
     5: "Wake"
 }
 
+all_possible_transitions=[]
+for (num_key,stage) in STAGE_MAP.items():
+  for (num_key2,stage2) in STAGE_MAP.items():
+    if stage!=stage2:
+      all_possible_transitions.append(f"{stage}_to_{stage2}")
+  all_possible_transitions.append(f"{stage}_to_Unknown")
+  all_possible_transitions.append(f"{stage}_to_End")
+
+
 metadata = ["subject", "session", "channel", "stage", "category","transition_id","transition_type"]
 generic_features = ["abs_energy","abs_sum_changes", "mean_abs_change", "root_mean_square",
                     "variation_coeff", "median","skewness", "kurtosis","longest_strike_above_mean", 
                     "longest_strike_below_mean","quantile_0.1","quantile_0.25","quantile_0.75",
                     "quantile_0.9","autocorr_lag_1","autocorr_lag_2","autocorr_lag_5",
                     "autocorr_lag_10","ratio_beyond_r_sigma_2","flatline_pct", "clipping_pct", 
-                    "mean", "std", "variance", "hf_power_ratio","lf_power_ratio",
-                    "trans_mean_before","trans_mean_after","trans_std_before","trans_std_after",
-                    "trans_recovery","trans_variability_change"]
+                    "mean", "std", "variance", "hf_power_ratio","lf_power_ratio"]
 emg_only_features = ['hf_ratio_signal', 'powerline_ratio',
                      'spec_peak_min_ratio', 'energy_ratio_chunks']
 ecg_only_features_1 = ['rms', 'ptp', 'max_amp', 'flatline_duration', 'is_flat',
@@ -92,19 +99,23 @@ eeg_only_features_3=["sw_density","sw_mean_amp","sw_amp_std","sw_mean_duration",
                       "sw_duration_std","sw_mean_freq","sw_total_duration"]  
 resp_only_features = ['mean_resp_rate', 'resp_variability', 'linear_trend']
 synchrony_only_features = ["r", "ccc", "lag", "peak_lag", "amp_ratio","phase_lock"]
-transition_only_features=["trans_mean_before","trans_mean_after","trans_std_before","trans_std_after","trans_recovery","trans_variability_change"]
+transition_features=["trans_mean_before","trans_mean_after","trans_std_before","trans_std_after","trans_recovery","trans_variability_change"]
+transition_only_features=[]
+for i in all_possible_transitions:
+  for j in transition_features:
+    transition_only_features.append(f"{i}_{j}") 
 annotation_only_features=["ahi_auto","arousal_auto","limb_auto","w_pct","r_pct","n1_pct","n2_pct","n3_pct","efficiency","prob_w","prob_n3","prob_arous"] 
 ALL_FEATURE_COLUMNS = list(
     set(metadata + generic_features + synchrony_only_features + emg_only_features +
         ecg_only_features_1 + ecg_only_features_2 +
-        eeg_only_features_1 + eeg_only_features_2 + eeg_only_features_3+ resp_only_features))
+        eeg_only_features_1 + eeg_only_features_2 + eeg_only_features_3+ resp_only_features+transition_only_features))
 valid_features = {
-    'eeg': eeg_only_features_1 + eeg_only_features_2 + eeg_only_features_3 + generic_features + synchrony_only_features,
-    'leg emg': emg_only_features + generic_features + synchrony_only_features,
-    'chin emg': emg_only_features + generic_features,
-    'ecg': ecg_only_features_1 + ecg_only_features_2 + generic_features,
-    'resp': resp_only_features + generic_features + synchrony_only_features,
-    'eog': generic_features + synchrony_only_features  
+    'eeg': eeg_only_features_1 + eeg_only_features_2 + eeg_only_features_3 + generic_features + synchrony_only_features + transition_only_features,
+    'leg emg': emg_only_features + generic_features + synchrony_only_features + transition_only_features,
+    'chin emg': emg_only_features + generic_features + transition_only_features,
+    'ecg': ecg_only_features_1 + ecg_only_features_2 + generic_features + transition_only_features,
+    'resp': resp_only_features + generic_features + synchrony_only_features + transition_only_features,
+    'eog': generic_features + synchrony_only_features + transition_only_features
 }
 
 UNIQUE_CHANNELS = ['f3-m2', 'f4-m1', 'c3-m2', 'c4-m1', 'o1-m2',
@@ -123,7 +134,7 @@ VALID_STAGE_NAMES = list(STAGE_MAP.values()) + ["All"]
 
 def get_master_feature_names(category_lookup):
     """
-    Generates Consistent column names containtig id.
+    Generates Consistent column names containting id.
     Format: category-channel-stage-id-feature
     """
     MASTER_FEATURE_NAMES = []
@@ -326,6 +337,7 @@ def extract_local_transition_features(data, boundary_idx, fs, window_sec=60):
     """
     Calculates generic transition features around a single specific boundary point.
     """ 
+    default_trans={feat: np.nan for feat in transition_features}
     window_samples = int(window_sec * fs)
     before_start = max(0, boundary_idx - window_samples)
     before_end = boundary_idx
@@ -336,7 +348,7 @@ def extract_local_transition_features(data, boundary_idx, fs, window_sec=60):
     after = data[after_start:after_end]
 
     if len(before) < fs or len(after) < fs:
-        return {}
+        return default_trans
 
     return {
         "trans_mean_before": np.mean(before),
@@ -694,7 +706,7 @@ def process_channel(ch_name, raw_psg, category_lookup, subject_id, session_id, h
     
         data = data[~np.isnan(data)]
         if len(data) < 10:
-            return None
+            return []
     
         category = category_lookup.get(ch_name, "unknown")
     
@@ -736,27 +748,19 @@ def process_channel(ch_name, raw_psg, category_lookup, subject_id, session_id, h
                 continue
     
             features = extract_features(block_data, fs, ch_name, category, subject_id, session_id, stage_name, transition_counter, transition_type, block_hypno, processed)
-            trans_features = extract_local_transition_features(data=data, boundary_idx=end_idx, fs=fs, window_sec=60)
-            if trans_features:
-                trans_row = {
-                    "subject": subject_id,
-                    "session": session_id,
-                    "channel": ch_name,
-                    "stage": stage_name,
-                    "category": category,
-                    "transition_id": transition_counter,
-                    "transition_type": transition_type,
-                    **trans_features
-                }
-                
-                trans_headers = metadata + transition_only_features
-                trans_df = pd.DataFrame([trans_row]).reindex(columns=trans_headers)
-                trans_df.to_csv("backup_transitions.csv", mode="a", header=False, index=False)
-          
-            features.update(trans_features)
-            stage_results.append(features)
-            transition_counter += 1
-    
+            if features: 
+                features["stage"] = stage_name
+                features["category"] = category
+                features["transition_id"]=trainsition_counter
+                features["transition_type"]=transition_type
+                trans_features=extract_local_transition_features(data=data,boundary_idx=end_idx,fs=fs,window_sec=60)
+                features.update(trans_features)
+                stage_results.append(features)
+            
+            transition_counter=transition_counter+1
+
+        if not stage_results:
+            return []
         if not aggregate:
             return stage_results
         else:
@@ -764,7 +768,11 @@ def process_channel(ch_name, raw_psg, category_lookup, subject_id, session_id, h
             normal_cols = [c for c in df.columns if c not in (["transition_id", "transition_type"] + transition_only_features)]
             normal_df = (df.groupby("stage")[normal_cols].mean(numeric_only=True).reset_index())
             transition_df = (df.groupby(["stage", "transition_type"])[transition_only_features].mean(numeric_only=True).reset_index())
-            merged = transition_df.merge(normal_df, on="stage", how="left")
+            pivoted = transition_df.pivot(index="stage", columns="transition_type", values=transition_features) 
+            pivoted.columns = [f"{trans}_{feat}" for feat, trans in pivoted.columns] 
+            pivoted = pivoted.reindex(columns=transition_only_features, fill_value=np.nan).reset_index() 
+            
+            merged = pivoted.merge(normal_df, on="stage", how="left")
             merged["category"] = category
             merged["channel"] = ch_name
             merged["transition_id"] = -1
