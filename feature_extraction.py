@@ -977,9 +977,9 @@ def stratified_pca_feature_selection(df, y, params):
         aucs = []
         for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups[train_idx]):
             if isinstance(X_tr_sub, np.ndarray):
-                X_tr_sub = pd.DataFrame(X_tr_sub)
+                X_tr_sub = pd.DataFrame(X_tr_sub,columns=X_tr_sub.columns)
             if isinstance(y_train, np.ndarray):
-                y_train = pd.Series(y_train)
+                y_train = pd.Series(y_train,name="target")
             X_tr_sub = X_tr_sub.reset_index(drop=True)
             y_train = y_train.reset_index(drop=True) 
             X_tr_fold = X_tr_sub.iloc[tr_idx]
@@ -1015,9 +1015,9 @@ def stratified_pca_feature_selection(df, y, params):
 
             aucs = []
             for tr_idx, val_idx in gkf.split(X_tr_filt, y_train, groups[train_idx]):
-                if isinstance(X_tr_filt, np.ndarray):
+                if isinstance(X_tr_filt, np.ndarray,X_tr_filt.columns):
                     X_tr_filt = pd.DataFrame(X_tr_filt)
-                if isinstance(y_train, np.ndarray):
+                if isinstance(y_train, np.ndarray,name="target"):
                     y_train = pd.Series(y_train)
                 X_tr_filt = X_tr_filt.reset_index(drop=True)
                 y_train = y_train.reset_index(drop=True) 
@@ -1077,9 +1077,9 @@ def stratified_pca_feature_selection(df, y, params):
 
                 for tr_idx, val_idx in gkf.split(X_tr_pca, y_train, groups[train_idx]):
                     if isinstance(X_tr_pca, np.ndarray):
-                        X_tr_pca = pd.DataFrame(X_tr_pca)
+                        X_tr_pca = pd.DataFrame(X_tr_pca,columns=X_tr_pca.columns)
                     if isinstance(y_train, np.ndarray):
-                        y_train = pd.Series(y_train)
+                        y_train = pd.Series(y_train,name="target")
                     X_tr_pca = X_tr_pca.reset_index(drop=True)
                     y_train = y_train.reset_index(drop=True) 
                     X_tr_fold = X_tr_pca.iloc[tr_idx]
@@ -1103,9 +1103,9 @@ def stratified_pca_feature_selection(df, y, params):
 
                 for tr_idx, val_idx in gkf.split(X_tr, y_train, groups[train_idx]):
                     if isinstance(X_tr, np.ndarray):
-                        X_tr = pd.DataFrame(X_tr)
+                        X_tr = pd.DataFrame(X_tr,columns=X_tr.columns)
                     if isinstance(y_train, np.ndarray):
-                        y_train = pd.Series(y_train)
+                        y_train = pd.Series(y_train,name="target")
                     X_tr = X_tr.reset_index(drop=True)
                     y_train = y_train.reset_index(drop=True) 
                     X_tr_fold = X_tr.iloc[tr_idx]
