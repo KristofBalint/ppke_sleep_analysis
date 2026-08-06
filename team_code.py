@@ -196,8 +196,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 #features.append(np.hstack(    [demographic_features, physiological_vector,algorithmic_features]))
                 labels.append(label)
 
-            if 'physiological_data' in locals(): del physiological_data
-            if 'algorithmic_annotations' in locals(): del algorithmic_annotations
+            #if 'physiological_data' in locals(): del physiological_data
+            #if 'algorithmic_annotations' in locals(): del algorithmic_annotations
 
         except Exception as e:
             # If an error occurs (e.g., a record is corrupted), log it and move to the next
