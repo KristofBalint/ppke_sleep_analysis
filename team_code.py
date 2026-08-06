@@ -193,6 +193,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 #header_written=True
                 features.append(feat_df)
                 team_debug.update_success("patient appended", patient_id=patient_id, iteration=i) 
+				if len(features)==0:
+					team_debug.update_failure("patient appended",patient_id=patient_id,iteration=i)
                 #features.append(np.hstack(    [demographic_features, physiological_vector,algorithmic_features]))
                 labels.append(label)
 
