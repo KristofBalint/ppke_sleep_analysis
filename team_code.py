@@ -490,11 +490,11 @@ def extract_demographic_features(data):
 
     # 3. Race One-Hot Encoding (6 dimensions)
     # Standardizes the raw text into one of six categories using the helper function
-    race_category = get_standardized_race(data).lower()
+    #race_category = get_standardized_race(data).lower() #FOR TWO FUCKING MONTHS I DID NOT NOTICE IT WAS REFACTORED
+	race_category = load_race(data,standardize=True).lower()
     race_vec = np.zeros(5)
     # Pre-defined mapping for index consistency
-    race_mapping = {'asian': 0, 'black': 1, 'others': 2, 'unavailable': 3,
-                    'white': 4}
+    race_mapping = {'asian': 0, 'black': 1, 'others': 2, 'unavailable': 3,'white': 4}
     race_vec[race_mapping.get(race_category, 2)] = 1
 
     # 4. Body Mass Index (BMI) Feature (1 dimension)
