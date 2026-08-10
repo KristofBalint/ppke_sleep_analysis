@@ -205,14 +205,19 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             
             # features.append(np.hstack(    [demographic_features, physiological_vector,algorithmic_features]))
             labels.append(label)
-        modality_signals={}
-        for raw_channel_name,channel_signal in patient_record.get_signals().items():
-            modality,std_key=get_channel_category(raw_channel_name)
-            if modality:
-                if modality not in modality_signals:
-                    modality_signals[modality]={}
-                modality_signals[modality][std_key]=channel_signal
-        sleep_fm_emb=extractor.extract_features(modality_signals)
+        modality_signals = {}
+
+        for raw_channel_name, channel_signal in physiological_data.items():
+            # Retrieve modality category (e.g., 'BAS', 'RESP', 'EKG', 'EMG')
+            category = category_lookup.get(raw_channel_name)
+                
+            if category:
+                if category not in modality_signals:
+                    modality_signals[category] = {}
+                # Store signal under its category using the raw channel name as key
+                modality_signals[category][raw_channel_name] = channel_signal    
+        # Extract embeddings
+        sleepfm_emb = extractor.extract_features(modality_signals)
         sleep_fm_embeddings_array.append(sleepfm_emb)
         # if 'physiological_data' in locals(): del physiological_data
         # if 'algorithmic_annotations' in locals(): del algorithmic_annotations
