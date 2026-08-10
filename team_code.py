@@ -41,7 +41,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Build the absolute path to the CSV file relative to the script location
 DEFAULT_CSV_PATH = os.path.join(SCRIPT_DIR, 'channel_table.csv')
 #SleepFM setup
-checkpoint_path = Path(SCRIPT_DIR) / "sleepfm" / "checkpoints" / "model_diagnosis"
+checkpoint_path = Path(SCRIPT_DIR) / "sleepfm" / "checkpoints" / "model_diagnosis" / "best.pth"
 config = SleepFMConfig(checkpoint_path=checkpoint_path)
 extractor = FeatureExtractorStrategy(config)
 ################################################################################
