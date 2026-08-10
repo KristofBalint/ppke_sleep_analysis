@@ -28,5 +28,6 @@ def get_parser():
 def run(args):
     train_model(args.data_folder, args.model_folder, args.verbose) ### Teams: Implement this function!!!
 
+
 if __name__ == '__main__':
     run(get_parser().parse_args(sys.argv[1:]))

@@ -24,6 +24,7 @@ id_time_to_event = 'Time_to_Event'
 lower_bound = 1 # Lower bound of interval for CI diagnosis in years
 upper_bound = 6 # Upper bound of interval for CI diagnosis in years
 
+
 # Parse arguments.
 def get_parser():
     description = 'Create cognitive impairment labels'

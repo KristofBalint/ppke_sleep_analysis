@@ -4,6 +4,7 @@ import numpy as np
 import scipy
 import traceback
 
+
 class HiddenPrints:
     """
         Context manager to temporarily suppress console output.

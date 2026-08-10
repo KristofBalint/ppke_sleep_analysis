@@ -19,6 +19,7 @@ PHYSIOLOGICAL_DATA_SUBFOLDER = 'physiological_data'
 ALGORITHMIC_ANNOTATIONS_SUBFOLDER = 'algorithmic_annotations'
 HUMAN_ANNOTATIONS_SUBFOLDER = 'human_annotations'
 
+
 # --- CSV Header Mapping Configuration ---
 # Centralized dictionary to manage all CSV column names for the HSP project
 HEADERS = {

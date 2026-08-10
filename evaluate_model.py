@@ -13,6 +13,7 @@
 #
 # The Challenge webpage describes the file formats and scoring functions for this script.
 
+
 # Import packages.
 import argparse
 import numpy as np
