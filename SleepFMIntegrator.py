@@ -489,14 +489,14 @@ class SleepFMEncoder(nn.Module):
         """
 
         backbone = SetTransformer(
-            in_channels=self.config.max_channels,
+            in_channels=self.config.maximum_channels_per_modality,
             patch_size=self.config.patch_size,
-            embed_dim=self.config.embedding_dim,
-            num_heads=self.config.num_heads,
-            num_layers=self.config.num_layers,
+            embed_dim=self.config.embedding_dimension,
+            num_heads=self.config.num_attention_heads,
+            num_layers=self.config.num_transforming_layers,
             pooling_head=self.config.pooling_heads,
             dropout=self.config.dropout,
-            max_seq_length=self.config.max_sequence_length,
+            max_seq_length=self.config.maximum_sequence_length,
         )
 
         return backbone
