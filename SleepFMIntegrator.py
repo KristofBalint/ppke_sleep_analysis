@@ -676,7 +676,13 @@ class SleepFMEncoder(nn.Module):
 
         # Add batch dimension if missing: (C, S, T) -> (1, C, S, T)
         if signal.ndim == 3:
-            signal = signal.unsqueeze(0)
+            # Shape is (C, S, T_win) -> reshape to (1, C, S * T_win)
+            C, S, T_win = signal.shape
+            signal = signal.view(1, C, S * T_win)
+        elif signal.ndim == 4:
+            # Shape is (B, C, S, T_win) -> reshape to (B, C, S * T_win)
+            B, C, S, T_win = signal.shape
+            signal = signal.view(B, C, S * T_win)
 
         if mask is not None:
             mask = mask.to(self.device)
@@ -910,8 +916,8 @@ class FeatureExtractorStrategy:
     def extract_features(self, modality_signals: Dict[str, Dict[str, np.ndarray]]) -> np.ndarray:
         tensors, masks = self.preprocessor.preprocess(modality_signals)
         with torch.no_grad():
-            embeddings = self.model(tensors, masks)
-        return embeddings.squeeze(0).cpu().numpy()
+            combined_tensor = self.model.encode_concat(tensors, masks)  
+        return combined_tensor.squeeze(0).cpu().numpy()
 
 class FineTuneStrategy(nn.Module):
     """
