@@ -6,9 +6,8 @@ from typing import Dict, List, Optional, Sequence, Tuple, Literal, Union
 import numpy as np
 from scipy.signal import resample
 from sleepfm.models.models import SetTransformer
-
 import torch
-
+from torch import nn
 
 @dataclass
 class SleepFMConfig:
