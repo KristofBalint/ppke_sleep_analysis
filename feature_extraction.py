@@ -1051,10 +1051,10 @@ def stratified_pca_feature_selection(df, y, params):
 
             aucs = []
             for tr_idx, val_idx in gkf.split(X_tr_filt, y_train, groups[train_idx]):
-                if isinstance(X_tr_filt, np.ndarray, X_tr_filt.columns):
-                    X_tr_filt = pd.DataFrame(X_tr_filt)
-                if isinstance(y_train, np.ndarray, name="target"):
-                    y_train = pd.Series(y_train)
+                if isinstance(X_tr_filt, np.ndarray):
+                    X_tr_filt = pd.DataFrame(X_tr_filt, columns=X_tr_filt.columns)
+                if isinstance(y_train, np.ndarray):
+                    y_train = pd.Series(y_train, name="target")
                 X_tr_filt = X_tr_filt.reset_index(drop=True)
                 y_train = y_train.reset_index(drop=True)
                 X_tr_fold = X_tr_filt.iloc[tr_idx]
@@ -1085,6 +1085,10 @@ def stratified_pca_feature_selection(df, y, params):
             X_tr = scaler.fit_transform(imputer.fit_transform(best_tr_subset))
             X_te = scaler.transform(imputer.transform(best_te_subset))
 
+            feature_names= imputer.get_feature_names_out(best_tr_subset.columns)
+            X_tr=pd.DataFrame(X_tr_raw,columns=feature_names)
+            X_te=pd.DataFrame(X_te_raw,columns=feature_names)
+
             n_samples, n_features = X_tr.shape
             max_possible_components = min(n_samples, n_features)
 
@@ -1106,14 +1110,14 @@ def stratified_pca_feature_selection(df, y, params):
 
             if avg_corr > 0.6 or type == "stage" or val == "resp":
                 X_tr_pca = pca.fit_transform(X_tr)
+                pca_cols = [f"pca_{i}" for i in range(X_tr_pca.shape[1])]
                 X_te_pca = pca.transform(X_te)
-
                 pca_model = XGBClassifier(**params, tree_method="hist", enable_categorical=True, random_state=42)
                 aucs = []
 
                 for tr_idx, val_idx in gkf.split(X_tr_pca, y_train, groups[train_idx]):
                     if isinstance(X_tr_pca, np.ndarray):
-                        X_tr_pca = pd.DataFrame(X_tr_pca, columns=X_tr_pca.columns)
+                        X_tr_pca = pd.DataFrame(X_tr_pca, columns=pca_cols)
                     if isinstance(y_train, np.ndarray):
                         y_train = pd.Series(y_train, name="target")
                     X_tr_pca = X_tr_pca.reset_index(drop=True)
@@ -1138,8 +1142,6 @@ def stratified_pca_feature_selection(df, y, params):
                 aucs = []
 
                 for tr_idx, val_idx in gkf.split(X_tr, y_train, groups[train_idx]):
-                    if isinstance(X_tr, np.ndarray):
-                        X_tr = pd.DataFrame(X_tr, columns=X_tr.columns)
                     if isinstance(y_train, np.ndarray):
                         y_train = pd.Series(y_train, name="target")
                     X_tr = X_tr.reset_index(drop=True)
