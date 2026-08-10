@@ -493,7 +493,7 @@ class SleepFMEncoder(nn.Module):
             patch_size=self.config.patch_size,
             embed_dim=self.config.embedding_dimension,
             num_heads=self.config.num_attention_heads,
-            num_layers=self.config.num_transforming_layers,
+            num_layers=self.config.num_transformer_layers,
             pooling_head=self.config.pooling_heads,
             dropout=self.config.dropout,
             max_seq_length=self.config.maximum_sequence_length,
