@@ -26,6 +26,7 @@ from xgboost import XGBClassifier
 from sklearn import metrics
 import traceback
 from utils import DebugMessageCollector
+from SleepFMIntegrator import *
 
 
 team_debug = DebugMessageCollector("team_code")
@@ -39,8 +40,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Build the absolute path to the CSV file relative to the script location
 DEFAULT_CSV_PATH = os.path.join(SCRIPT_DIR, 'channel_table.csv')
-
-
+#SleepFM setup
+checkpoint_path = Path(SCRIPT_DIR) / "sleepfm" / "checkpoints" / "model_diagnosis"
+config = SleepFMConfig(checkpoint_path=checkpoint_path)
+extractor = FeatureExtractorStrategy(config)
 ################################################################################
 #
 # Required functions. Edit these functions to add your code, but do not change the arguments for the functions.
@@ -71,6 +74,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     # Iterate over the records to extract the features and labels.
     features = list()
     labels = list()
+    sleepfm_embeddings_array=list()
 
     category_lookup = get_category_map(DEFAULT_CSV_PATH)
 
@@ -197,175 +201,181 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 team_debug.update_success("patient appended", patient_id=patient_id, iteration=i)
                 if len(features) == 0:
                     team_debug.update_failure("patient appended", patient_id=patient_id, iteration=i)
+
+            
             # features.append(np.hstack(    [demographic_features, physiological_vector,algorithmic_features]))
             labels.append(label)
-
+        modality_signals={}
+        for raw_channel_name,channel_signal in patient_record.get_signals().items():
+            modality,std_key=get_channel_category(raw_channel_name)
+            if modality:
+                if modality not in modality_signals:
+                    modality_signals[modality]={}
+                modality_signals[modality][std_key]=channel_signal
+        sleep_fm_emb=extractor.extract_features(modality_signals)
+        sleep_fm_embeddings_array.append(sleepfm_emb)
         # if 'physiological_data' in locals(): del physiological_data
         # if 'algorithmic_annotations' in locals(): del algorithmic_annotations
 
     except Exception as e:
     # If an error occurs (e.g., a record is corrupted), log it and move to the next
-    error_stack = traceback.format_exc()
-    team_debug.update_failure("start", patient_id=patient_id if 'patient_id' in locals() else "Unknown", iteration=i,
+        error_stack = traceback.format_exc()
+        team_debug.update_failure("start", patient_id=patient_id if 'patient_id' in locals() else "Unknown", iteration=i,
                               message=str(e), exc=e)
-    tqdm.write(f"  !!! Error processing record {i + 1} ({patient_id}): {e}")
-    tqdm.write(error_stack)
-    continue
+        tqdm.write(f"  !!! Error processing record {i + 1} ({patient_id}): {e}")
+        tqdm.write(error_stack)
+        continue
 
+    pbar.close()
 
-pbar.close()
-
-params = {'max_depth': 7, 'learning_rate': 0.030842680992267595, 'n_estimators': 963, 'subsample': 0.668562285184131,
+    params = {'max_depth': 7, 'learning_rate': 0.030842680992267595, 'n_estimators': 963, 'subsample': 0.668562285184131,
           'colsample_bytree': 0.6664590708996059, 'gamma': 1.0645185377275237, 'min_child_weight': 16,
           'reg_alpha': 0.0600354240141498, 'reg_lambda': 35.771321493090454}
 
-print(f"DEBUG: shape of features {len(features)}")
+    print(f"DEBUG: shape of features {len(features)}")
 
-if len(features) > 0:
-    full_df = pd.concat(features, ignore_index=True)
-    team_debug.update_success("feature dataframe created", message="Aggregated feature vector complete")
-else:
-    # List of all required backup CSVs
-    required_backups = [
-        "backup_eeg.csv", "backup_emg.csv", "backup_ecg.csv",
-        "backup_resp.csv", "backup_eog.csv", "backup_transitions.csv",
-        "backup_synchrony.csv"
-    ]
+    if len(features) > 0:
+        full_df = pd.concat(features, ignore_index=True)
+        team_debug.update_success("feature dataframe created", message="Aggregated feature vector complete")
+    else:
+        # List of all required backup CSVs
+        required_backups = [
+            "backup_eeg.csv", "backup_emg.csv", "backup_ecg.csv",
+            "backup_resp.csv", "backup_eog.csv", "backup_transitions.csv",
+            "backup_synchrony.csv"
+        ]
 
-    # Check if any backup files are missing and raise a specific exception
-    missing_backups = [b for b in required_backups if not os.path.exists(b)]
-    if missing_backups:
-        err_msg = (
-            f"Extraction failed! The following backup CSV files were NOT created/found: {missing_backups}\n"
-            f"\n--- COLLECTOR DEBUG SUMMARY ---\n{team_debug.summary()}"
+        # Check if any backup files are missing and raise a specific exception
+        missing_backups = [b for b in required_backups if not os.path.exists(b)]
+        if missing_backups:
+            err_msg = (
+                f"Extraction failed! The following backup CSV files were NOT created/found: {missing_backups}\n"
+                f"\n--- COLLECTOR DEBUG SUMMARY ---\n{team_debug.summary()}"
+            )
+            raise RuntimeError(
+                err_msg
+            )
+    
+        print("In-memory extraction produced no features. Reconstructing full_df from backup CSVs...")
+
+        # 1. Load base signal CSVs
+        dfs = []
+        for cat_file in ["backup_eeg.csv", "backup_emg.csv", "backup_ecg.csv", "backup_resp.csv", "backup_eog.csv"]:
+            df_cat = pd.read_csv(cat_file)
+            if not df_cat.empty:
+                dfs.append(df_cat)
+    
+        if not dfs:
+            err_msg = f"Backup CSV files exist but are all empty.\n\n--- COLLECTOR DEBUG SUMMARY ---\n{team_debug.summary()}"
+            raise RuntimeError(err_msg)
+    
+        combined_signal_df = pd.concat(dfs, ignore_index=True)
+    
+        trans_df = pd.read_csv("backup_transitions.csv")
+        if not trans_df.empty:
+            merge_keys = ["subject", "session", "channel", "stage", "transition_id", "transition_type"]
+            combined_signal_df = combined_signal_df.merge(trans_df, on=merge_keys, how="left", suffixes=("", "_dup"))
+            combined_signal_df = combined_signal_df.loc[:, ~combined_signal_df.columns.str.endswith("_dup")]
+    
+        sync_df = pd.read_csv("backup_synchrony.csv")
+        if not sync_df.empty:
+            sync_keys = ["subject", "session", "channel", "stage"]
+            combined_signal_df = combined_signal_df.merge(sync_df, on=sync_keys, how="left", suffixes=("", "_dup"))
+            combined_signal_df = combined_signal_df.loc[:, ~combined_signal_df.columns.str.endswith("_dup")]
+    
+        # 4. Pivot and rename (identical to extract_physiological_features logic)
+        quality_df = combined_signal_df.reindex(columns=ALL_FEATURE_COLUMNS)
+        feature_df = quality_df.pivot(
+            index=['subject', 'session'],
+            columns=['category', 'channel', 'stage', 'transition_id']
         )
-        raise RuntimeError(
-            err_msg
-        )
+    
+        valid_cols = [col for col in feature_df.columns if col[0] in valid_features.get(col[1], [])]
+        feature_df = feature_df[valid_cols]
+    
+        feature_df.columns = [
+            f"{col[1]}-{col[2]}-{col[3]}-{col[4]}-{col[0]}" if isinstance(col, tuple) else col
+            for col in feature_df.columns.values
+        ]
+    
+        MASTER_FEATURE_NAMES = get_master_feature_names(category_lookup)
+        feature_df = feature_df.reindex(columns=MASTER_FEATURE_NAMES, fill_value=np.nan)
+    
+        feature_df["subject"] = feature_df.index.get_level_values(0)
+        feature_df["session"] = feature_df.index.get_level_values(1)
+    
+        full_df = feature_df.reset_index(drop=True)
+        team_debug.update_success("feature dataframe created",
+                                  message="Reconstructed feature vector from backup files complete")
 
-    print("In-memory extraction produced no features. Reconstructing full_df from backup CSVs...")
-
-    # 1. Load base signal CSVs
-    dfs = []
-    for cat_file in ["backup_eeg.csv", "backup_emg.csv", "backup_ecg.csv", "backup_resp.csv", "backup_eog.csv"]:
-        df_cat = pd.read_csv(cat_file)
-        if not df_cat.empty:
-            dfs.append(df_cat)
-
-    if not dfs:
-        err_msg = f"Backup CSV files exist but are all empty.\n\n--- COLLECTOR DEBUG SUMMARY ---\n{team_debug.summary()}"
-        raise RuntimeError(err_msg)
-
-    combined_signal_df = pd.concat(dfs, ignore_index=True)
-
-    trans_df = pd.read_csv("backup_transitions.csv")
-    if not trans_df.empty:
-        merge_keys = ["subject", "session", "channel", "stage", "transition_id", "transition_type"]
-        combined_signal_df = combined_signal_df.merge(trans_df, on=merge_keys, how="left", suffixes=("", "_dup"))
-        combined_signal_df = combined_signal_df.loc[:, ~combined_signal_df.columns.str.endswith("_dup")]
-
-    sync_df = pd.read_csv("backup_synchrony.csv")
-    if not sync_df.empty:
-        sync_keys = ["subject", "session", "channel", "stage"]
-        combined_signal_df = combined_signal_df.merge(sync_df, on=sync_keys, how="left", suffixes=("", "_dup"))
-        combined_signal_df = combined_signal_df.loc[:, ~combined_signal_df.columns.str.endswith("_dup")]
-
-    # 4. Pivot and rename (identical to extract_physiological_features logic)
-    quality_df = combined_signal_df.reindex(columns=ALL_FEATURE_COLUMNS)
-    feature_df = quality_df.pivot(
-        index=['subject', 'session'],
-        columns=['category', 'channel', 'stage', 'transition_id']
-    )
-
-    valid_cols = [col for col in feature_df.columns if col[0] in valid_features.get(col[1], [])]
-    feature_df = feature_df[valid_cols]
-
-    feature_df.columns = [
-        f"{col[1]}-{col[2]}-{col[3]}-{col[4]}-{col[0]}" if isinstance(col, tuple) else col
-        for col in feature_df.columns.values
-    ]
-
-    MASTER_FEATURE_NAMES = get_master_feature_names(category_lookup)
-    feature_df = feature_df.reindex(columns=MASTER_FEATURE_NAMES, fill_value=np.nan)
-
-    feature_df["subject"] = feature_df.index.get_level_values(0)
-    feature_df["session"] = feature_df.index.get_level_values(1)
-
-    full_df = feature_df.reset_index(drop=True)
-    team_debug.update_success("feature dataframe created",
-                              message="Reconstructed feature vector from backup files complete")
-
-y = full_df["Cognitive_Impairment"]
-ranked_features = stratified_pca_feature_selection(full_df, y, params)
-
-percentages = list(range(50, 4, -5))
-
-best_auc = 0
-best_features = None
-
-print(f"Lenght of the ranked features{len(ranked_features)}")
-for p in percentages:
-
-    n_keep = int(len(ranked_features) * (p / 100))
-    selected = ranked_features[:n_keep]
-
-    X = full_df[selected]
     y = full_df["Cognitive_Impairment"]
+    ranked_features = stratified_pca_feature_selection(full_df, y, params)
+    
+    percentages = list(range(50, 4, -5))
+    
+    best_auc = 0
+    best_features = None
+    
+    print(f"Lenght of the ranked features{len(ranked_features)}")
+    for p in percentages:
+    
+        n_keep = int(len(ranked_features) * (p / 100))
+        selected = ranked_features[:n_keep]
+    
+        X = full_df[selected]
+        y = full_df["Cognitive_Impairment"]
+    
+        print(f"Shape of X {X.shape} and y {y.shape} in percentage {p}")
+        model = XGBClassifier(**params, tree_method="hist", objective="binary:logistic",
+                              eval_metric="auc", enable_categorical=True, random_state=42)
+        model.fit(X, y)
+    
+        preds = model.predict_proba(X)[:, 1]
+        auc = metrics.roc_auc_score(y, preds)
+    
+        if auc > best_auc:
+            best_auc = auc
+            best_features = selected
+    
+    lengths = [len(f) for f in features]
+    print(f"Unique feature lengths found: {set(lengths)}")
+    
+    selected_features = best_features
 
-    print(f"Shape of X {X.shape} and y {y.shape} in percentage {p}")
-    model = XGBClassifier(**params, tree_method="hist", objective="binary:logistic",
-                          eval_metric="auc", enable_categorical=True, random_state=42)
-    model.fit(X, y)
+    X_tabular=full_df[selected_features].to_numpy()
+    X_combined=np.hstack([X_tabular,sleepfm_embeddings_array])
 
-    preds = model.predict_proba(X)[:, 1]
-    auc = metrics.roc_auc_score(y, preds)
-
-    if auc > best_auc:
-        best_auc = auc
-        best_features = selected
-
-lengths = [len(f) for f in features]
-print(f"Unique feature lengths found: {set(lengths)}")
-
-selected_features = best_features
-
-X = full_df[selected_features]
-y = full_df["Cognitive_Impairment"]
-
-# features = np.asarray(features, dtype=np.float32)
-# labels = np.asarray(labels, dtype=bool)
-
-# Train the models on the features.
-if verbose:
-    print('Training the model on the data...')
-
-print(X.shape)
-print(y.shape)
-
-X_np = X.to_numpy().astype(np.float32)
-y_np = y.to_numpy().astype(bool)
-print(X_np.shape)
-print(y_np.shape)
-
-team_debug.update_success("training started", message="Starting model fitting")
-model = XGBClassifier(
-    **params,
-    objective="binary:logistic",
-    eval_metric="auc",
-    tree_method="hist",
-    enable_categorical=True,
-    random_state=42
-).fit(X_np, y_np)
-
-# Create a folder for the model if it does not already exist.
-os.makedirs(model_folder, exist_ok=True)
-
-# Save the model.
-save_model(model_folder, model, selected_features)
-
-if verbose:
-    print('Done.')
-    print()
+    X = full_df[selected_features]
+    y = full_df["Cognitive_Impairment"]
+    
+    # features = np.asarray(features, dtype=np.float32)
+    # labels = np.asarray(labels, dtype=bool)
+    
+    # Train the models on the features.
+    if verbose:
+        print('Training the model on the data...')
+    
+    print(X.shape)
+    print(y.shape)
+    
+    X_np = X.to_numpy().astype(np.float32)
+    y_np = y.to_numpy().astype(bool)
+    print(X_np.shape)
+    print(y_np.shape)
+    
+    team_debug.update_success("training started", message="Starting model fitting")
+    #model = XGBClassifier(**params,objective="binary:logistic",eval_metric="auc",tree_method="hist",enable_categorical=True,random_state=42).fit(X_np, y_np)
+    model = XGBClassifier(**params,objective="binary:logistic",eval_metric="auc",tree_method="hist",enable_categorical=True,random_state=42).fit(X_combined, y_np)
+    
+    # Create a folder for the model if it does not already exist.
+    os.makedirs(model_folder, exist_ok=True)
+    
+    # Save the model.
+    save_model(model_folder, model, selected_features)
+    
+    if verbose:
+        print('Done.')
+        print()
 
 
 # Load your trained models. This function is *required*. You should edit this function to add your code, but do *not* change the
