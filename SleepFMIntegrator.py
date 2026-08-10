@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Literal, Union
 import numpy as np
 from scipy.signal import resample
-from sleepfm.models.models import SetTransformer
+from sleepfm_clinical.sleepfm.models.models import SetTransformer
 import torch
 from torch import nn
+
 
 @dataclass
 class SleepFMConfig:
@@ -169,7 +170,7 @@ class SleepFMPreprocessor:
 
     # Public API
 
-     def preprocess(self,modality_signals: Dict[str, Dict[str, np.ndarray]],
+    def preprocess(self,modality_signals: Dict[str, Dict[str, np.ndarray]],
                      sampling_frequencies: Optional[Union[int, Dict[str, Union[int, Dict[str, int]]]]] = None, 
                      ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
     #def preprocess(self,modality_signals: Dict[str, Dict[str, np.ndarray]]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
@@ -201,6 +202,8 @@ class SleepFMPreprocessor:
                 mod_fs = sampling_frequencies.get(modality, None)
             elif isinstance(sampling_frequencies, (int, float)):
                 mod_fs = sampling_frequencies
+            else:
+                mod_fs = sampling_frequencies
             tensor, mask = self._process_modality(modality,signals, mod_fs)
 
             modality_tensors.append(tensor)
@@ -216,7 +219,7 @@ class SleepFMPreprocessor:
         for channel_name, signal in signals.items():
             chan_fs = original_fs.get(channel_name) if isinstance(original_fs, dict) else original_fs 
             signal = self._validate_signal(signal)
-            signal = self._resample(signal,signal = self._resample(signal, original_fs=chan_fs))
+            signal = self._resample(signal, original_fs=chan_fs)
             signal = self._normalize(signal)
             windowed = self.create_windows(signal) 
             processed.append(windowed)
@@ -272,7 +275,10 @@ class SleepFMPreprocessor:
     # Windowing
 
     def create_windows(self,signal: np.ndarray) -> np.ndarray:
-
+        if len(signal) == 0:
+            return np.empty((0, self.window_samples), dtype=np.float32)
+        if len(signal) < self.window_samples:
+            signal = np.pad(signal, (0, self.window_samples - len(signal)), mode='constant')
         windows = []
         for start in range(0,len(signal)- self.window_samples + 1,self.stride_samples):
             windows.append(signal[start:start + self.window_samples])
@@ -284,23 +290,30 @@ class SleepFMPreprocessor:
 
     def _stack_channels(self, windows_list: List[np.ndarray], modality: str) -> Tuple[torch.Tensor, torch.Tensor]:
         max_channels = self.config.maximum_channels_per_modality[modality]
-        num_windows = windows_list[0].shape[0] if len(windows_list) > 0 and windows_list[0].size > 0 else 0
-        if len(windows_list) == 0 or num_windows == 0:
-            tensor = torch.zeros((max_channels, num_windows, self.window_samples), dtype=torch.float32)
-            mask = torch.ones(max_channels, dtype=torch.bool)
+        
+        # Check if any channel returned non-empty windows
+        has_valid_windows = any(isinstance(w, np.ndarray) and w.ndim == 2 and w.shape[0] > 0 for w in windows_list)
+
+        if not has_valid_windows:
+            # Explicitly force shape (max_channels, 1, window_samples) with all channels masked out
+            tensor = torch.zeros((max_channels, 1, self.window_samples), dtype=torch.float32)
+            mask = torch.ones(max_channels, dtype=torch.bool)  # True = masked/ignored channel
             return tensor, mask
 
-        stacked = np.stack(windows_list, axis=0) 
-        channels = stacked.shape[0]
-        padded = np.zeros((max_channels,num_windows,self.window_samples),dtype=np.float32)
+        # Filter out empty arrays if some channels in the modality had signals and others were empty
+        valid_windows = [w for w in windows_list if isinstance(w, np.ndarray) and w.ndim == 2 and w.shape[0] > 0]
+        num_windows = valid_windows[0].shape[0]
 
+        stacked = np.stack(valid_windows, axis=0)  # Shape: (channels, num_windows, window_samples)
+        channels = stacked.shape[0]
+
+        padded = np.zeros((max_channels, num_windows, self.window_samples), dtype=np.float32)
         padded[:channels] = stacked
 
-        mask = np.ones(max_channels,dtype=bool)
+        mask = np.ones(max_channels, dtype=bool)
+        mask[:channels] = False  # False = active channel
 
-        mask[:channels] = False
-
-        return (torch.from_numpy(padded),torch.from_numpy(mask))
+        return torch.from_numpy(padded), torch.from_numpy(mask)
         
 class SleepFMCheckpoint:
     """
@@ -660,10 +673,20 @@ class SleepFMEncoder(nn.Module):
         """
 
         signal = signal.to(self.device)
+
+        # Add batch dimension if missing: (C, S, T) -> (1, C, S, T)
+        if signal.ndim == 3:
+            signal = signal.unsqueeze(0)
+
         if mask is not None:
             mask = mask.to(self.device)
+            # Add batch dimension if missing: (C,) -> (1, C)
+            if mask.ndim == 1:
+                mask = mask.unsqueeze(0)
+            elif mask.ndim == 2 and mask.shape[1] == 1:
+                mask = mask.transpose(0, 1)  # Ensure shape is (1, C) rather than (C, 1)
 
-        pooled_embedding, sequence_embedding = self.backbone(signal,mask)
+        pooled_embedding, sequence_embedding = self.backbone(signal, mask)
         return pooled_embedding, sequence_embedding
         
     def forward(self,
