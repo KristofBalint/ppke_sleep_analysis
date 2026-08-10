@@ -1,10 +1,8 @@
 import pandas as pd
 import mne
 import numpy as np
-from scipy.stats import pearsonr
-from scipy.signal import correlate
-from scipy.stats import kurtosis, skew
-from scipy.signal import welch
+from scipy.stats import pearsonr, kurtosis, skew
+from scipy.signal import correlate, find_peaks, welch, hilbert
 from helper_code import *
 import neurokit2 as nk
 import yasa
@@ -15,10 +13,21 @@ import wfdb  # wfdb is needed for pecg
 from pecg.ecg import Biomarkers as Bm
 from get_hrv_bm import get_hrv_biomarkers
 from joblib import Parallel, delayed
-from get_spo2_bm import get_spo2_biomarkers  # currently problematic due to using an old scipy version #even after throwing out the complexity metics, it was still slow as dicks
+from get_spo2_bm import \
+    get_spo2_biomarkers  # currently problematic due to using an old scipy version #even after throwing out the complexity metics, it was still slow as dicks
 from utils import unfuck_old
+from tsfresh.feature_extraction import feature_calculators as tsf
+import time
+from xgboost import XGBClassifier
+from sklearn.feature_selection import RFE
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.model_selection import GroupShuffleSplit, GroupKFold
+from sklearn import metrics
 
 unfuck_old()
+
 
 def get_category_map(csv_path):
     df = pd.read_csv(csv_path)
@@ -50,56 +59,55 @@ STAGE_MAP = {
     5: "Wake"
 }
 
-ALL_FEATURE_COLUMNS = ["subject", "session", "channel", "stage", "category",
-                       # generic
-                       "mean", "std", "variance", "skewness", "kurtosis",
-                       "flatline_pct", "clipping_pct", "hf_power_ratio",
-                       "lf_power_ratio",
-                       # EEG
-                       "rms", "ptp", "max_amp", "dominant_freq", "rel_delta",
-                       "rel_theta", "rel_alpha", "rel_sigma", "rel_beta",
-                       "delta_beta_ratio",
-                       # Spindle Features (still in EEG)
-                       "spindle_count", "spindle_density", "spindle_mean_amp",
-                       "spindle_amp_std", "spindle_mean_duration",
-                       "spindle_duration_std", "spindle_mean_freq",
-                       "spindle_mean_relpower", "spindle_mean_rms",
-                       "spindle_total_duration",
-                        # Slow Wave Features (still in EEG)
-                        "sw_count", "sw_density", "sw_mean_amp", "sw_amp_std",
-                        "sw_mean_duration", "sw_duration_std", "sw_mean_freq",
-                        "sw_total_duration",
-                        # Slow Wave–Spindle Coupling (still in EEG)
-                        "sw_spindle_coupling_count",
-                        "sw_spindle_coupling_ratio",
-                        "sw_spindle_phase_mean",
-                        "sw_spindle_phase_std",
-                        "sw_spindle_delay_mean",
-                        "sw_spindle_delay_std",
-                       # ECG
-                       "flatline_duration", "is_flat", "amp_out_of_bounds",
-                       "hf_ratio_signal", "max_slope", "mean_hr",
-                       # HRV metrics (still in ECG)
-                       "AVNN", "SDNN", "RMSSD", "PNN50", "SEM", "PIP", "IALS",
-                       "PSS", "PAS", "SD1", "SD2", "alpha_1", "alpha_2", "MSE",
-                       "TOTAL_POWER", "VLF_POWER", "LF_POWER", "HF_POWER",
-                       "VLF_NORM", "LF_NORM", "HF_NORM", "LF_HF_RATIO",
-                       # EMG
-                       "powerline_ratio", "spec_peak_min_ratio",
-                       # Resp
-                       "mean_resp_rate", "resp_variability"
-                       # SpO2 biomarkers (still in Resp) #compatibility issues with old version
-
-                       #                  "AV", "MED", "Min", "SD", "RG", "P",
-                       # "M", "ZC", "DI", "ODI", "DL_u", "DL_sd", "DA100_u",
-                       # "DA100_sd", "DAmax_u", "DAmax_sd", "DD100_u", "DD100_sd",
-                       # "DDmax_u", "DDmax_sd", "DS_u", "DS_sd", "TD_u", "TD_sd",
-                       # "CA", "CT", "POD", "AODmax", "AOD100",
-                       # "ApEn", "LZ", "CTM", "SampEn","DFA",
-                       # "PRSAc", "PRSAad", "PRSAos", "PRSAsb", "PRSAsa", "AC",
-                       # "PSD_total", "PSD_band", "PSD_ratio", "PSD_peak"
-
-                       ]
+metadata = ["subject", "session", "channel", "stage", "category"]
+generic_features = ["skewness", "kurtosis", "flatline_pct", "clipping_pct",
+                    "abs_energy",
+                    "abs_sum_changes", "mean_abs_change", "root_mean_square",
+                    "variation_coeff",
+                    "longest_strike_above_mean", "longest_strike_below_mean",
+                    "mean", "std", "variance", "hf_power_ratio",
+                    "lf_power_ratio"]
+emg_only_features = ['hf_ratio_signal', 'powerline_ratio',
+                     'spec_peak_min_ratio', 'energy_ratio_chunks']
+ecg_only_features_1 = ['rms', 'ptp', 'max_amp', 'flatline_duration', 'is_flat',
+                       'amp_out_of_bounds',
+                       'hf_ratio_signal', 'max_slope', 'mean_hr',
+                       "mean_2nd_deriv_central"]
+ecg_only_features_2 = ["AVNN", "SDNN", "RMSSD", "PNN50", "SEM", "PIP", "IALS",
+                       "PSS", "PAS",
+                       "SD1", "SD2", "alpha_1", "alpha_2", "MSE", "TOTAL_POWER",
+                       "VLF_POWER", "LF_POWER", "HF_POWER", "VLF_NORM",
+                       "LF_NORM", "HF_NORM", "LF_HF_RATIO"]
+eeg_only_features_1 = ['rms', 'ptp', 'max_amp', 'dominant_freq',
+                       'rel_delta', 'rel_theta', 'rel_alpha', 'rel_sigma',
+                       'rel_beta', 'delta_beta_ratio',
+                       'time_rev_asym', 'num_peaks']
+eeg_only_features_2 = ['spindle_count', 'spindle_density', 'spindle_mean_amp',
+                       'spindle_amp_std',
+                       'spindle_mean_duration', 'spindle_duration_std',
+                       'spindle_mean_freq',
+                       'spindle_mean_relpower', 'spindle_mean_rms',
+                       'spindle_total_duration']
+resp_only_features = ['mean_resp_rate', 'resp_variability', 'linear_trend']
+synchrony_only_features = ["r", "ccc", "lag", "peak_lag", "amp_ratio",
+                           "phase_lock"]
+ALL_FEATURE_COLUMNS = list(
+    set(metadata + generic_features + synchrony_only_features + emg_only_features +
+        ecg_only_features_1 + ecg_only_features_2 +
+        eeg_only_features_1 + eeg_only_features_2 + resp_only_features))
+valid_features = {
+    'eeg': eeg_only_features_1 + eeg_only_features_2 + generic_features + synchrony_only_features,
+    # eeg has left and right synchrony
+    'leg emg': emg_only_features + generic_features + synchrony_only_features,
+    # leg emg has left and right synchrony
+    'chin emg': emg_only_features + generic_features,
+    # synchrony features were not calculated for chin emg
+    'ecg': ecg_only_features_1 + ecg_only_features_2 + generic_features,
+    # synchrony features were not calculated for ecg
+    'resp': resp_only_features + generic_features + synchrony_only_features,
+    # synchrony of abdominal and chest movement
+    'eog': generic_features + synchrony_only_features  # synchrony of eyes
+}
 
 UNIQUE_CHANNELS = ['f3-m2', 'f4-m1', 'c3-m2', 'c4-m1', 'o1-m2',
                    'o2-m1', 'e1', 'e2', 'chin1-chin2', 'ptaf',
@@ -113,12 +121,18 @@ FEATURES_TO_USE = [c for c in ALL_FEATURE_COLUMNS if
                    c not in ['subject', 'session', 'channel', 'category']]
 
 VALID_STAGE_NAMES = list(STAGE_MAP.values()) + ["All"]
-MASTER_FEATURE_NAMES = [
-    f"{ch}_{stage}_{feat}"
-    for ch in UNIQUE_CHANNELS
-    for stage in VALID_STAGE_NAMES
-    for feat in FEATURES_TO_USE
-]
+
+
+def get_master_feature_names(category_lookup):
+    MASTER_FEATURE_NAMES = []
+    for ch in UNIQUE_CHANNELS:
+        cat = category_lookup.get(ch)
+        if cat in valid_features:
+            for stage in VALID_STAGE_NAMES:
+                for feat in valid_features[cat]:
+                    MASTER_FEATURE_NAMES.append(f"{cat}_{ch}_{stage}_{feat}")
+
+    return MASTER_FEATURE_NAMES
 
 
 # 3.1 helper functions-------------------------------------
@@ -145,55 +159,226 @@ def concordance_cc(x, y):
     return (2 * cov_xy) / (var_x + var_y + (mean_x - mean_y) ** 2)
 
 
+def extract_tsfresh_generic(data):
+    """Calculates the specific generic features requested using tsfresh."""
+    res = {
+        "abs_energy": tsf.abs_energy(data),
+        "abs_sum_changes": tsf.absolute_sum_of_changes(data),
+        "mean_abs_change": tsf.mean_abs_change(data),
+        "root_mean_square": tsf.root_mean_square(data),
+        "variation_coeff": tsf.variation_coefficient(data),
+        "median": np.median(data),
+        "skewness": tsf.skewness(data),
+        "kurtosis": tsf.kurtosis(data),
+        "longest_strike_above_mean": tsf.longest_strike_above_mean(data),
+        "longest_strike_below_mean": tsf.longest_strike_below_mean(data),
+    }
+
+    # Quantiles
+    for q in [0.1, 0.25, 0.75, 0.9]:
+        res[f"quantile_{q}"] = tsf.quantile(data, q)
+
+    # Autocorrelations
+    for lag in [1, 2, 5, 10]:
+        res[f"autocorr_lag_{lag}"] = tsf.autocorrelation(data, lag)
+
+    # Ratio beyond sigma (standard 1, 2, 3)
+    res["ratio_beyond_r_sigma_2"] = tsf.ratio_beyond_r_sigma(data, 2)
+
+    return res
+
+
+# 3.2 Helper functions for EEG----------------------
+
+def rms_amplitude(x):
+    return np.sqrt(np.mean(x ** 2))
+
+
+def peak_to_peak(x):
+    return np.max(x) - np.min(x)
+
+
+def signal_std(x):
+    return np.std(x)
+
+
+def max_abs_amplitude(x):
+    return np.max(np.abs(x))
+
+
+def percent_above_threshold(x, threshold):
+    return np.mean(np.abs(x) > threshold)
+
+
+def bandpower_from_psd(f, Pxx, band):
+    idx = (f >= band[0]) & (f <= band[1])
+    return np.trapezoid(Pxx[idx], f[idx])
+
+
+# 3.3 ECG helper functions-----------------------------------------------
+def flatline_duration(x, fs, tolerance=1e-6):
+    diff = np.abs(np.diff(x))
+    flat = diff < tolerance
+    flat_samples = np.sum(flat)
+    return flat_samples / fs
+
+
+def is_flat_signal(x, threshold=1e-8):
+    return np.var(x) < threshold
+
+
+def amplitude_out_of_bounds(x, low=0.2, high=15.0):
+    ptp = peak_to_peak(x)
+    return ptp < low or ptp > high
+
+
+def max_slope(x, fs):
+    dx = np.diff(x) * fs
+    return np.max(np.abs(dx))
+
+
+def high_frequency_ratio(Pxx, f, cutoff=40):
+    # f, Pxx = welch(x, fs=fs)
+    hf_power = np.trapezoid(Pxx[f > cutoff], f[f > cutoff])
+    total_power = np.trapezoid(Pxx, f)
+    return hf_power / total_power if total_power > 0 else 0
+
+
+# 3.4 EMG helper functions-------------------------------------
+def powerline_ratio(Pxx, f, line_freq=50, bandwidth=1):
+    # f, Pxx = welch(x, fs=fs)
+    idx_line = np.logical_and(f >= line_freq - bandwidth,
+                              f <= line_freq + bandwidth)
+    line_power = np.trapezoid(Pxx[idx_line], f[idx_line])
+    total_power = np.trapezoid(Pxx, f)
+    return line_power / total_power if total_power > 0 else 0
+
+
+# 3.5 Cross channel synchrony helper functions------------------------------------
+def peak_lag(x, y, fs):
+    peaks_x, _ = find_peaks(x, distance=fs * 1)
+    peaks_y, _ = find_peaks(y, distance=fs * 1)
+    if len(peaks_x) == 0 or len(peaks_y) == 0:
+        return np.nan
+    lags = []
+    for px in peaks_x:
+        nearest = peaks_y[np.argmin(np.abs(peaks_y - px))]
+        lags.append((nearest - px) / fs)
+    return np.mean(lags)
+
+
+def crosscorr_lag(x, y, fs):
+    corr = correlate(x - np.mean(x), y - np.mean(y), mode="full")
+    lag_samples = np.argmax(corr) - (len(x) - 1)
+    return lag_samples / fs
+
+
+def phase_locking(x, y):
+    hx = hilbert(x)
+    hy = hilbert(y)
+    phase_x = np.angle(hx)
+    phase_y = np.angle(hy)
+    phase_diff = phase_x - phase_y
+    return np.abs(np.mean(np.exp(1j * phase_diff)))
+
+
+def synchrony_features(chest, abd, fs):
+    r, _ = pearsonr(chest, abd)
+    ccc = concordance_cc(chest, abd)
+    lag = crosscorr_lag(chest, abd, fs)
+    peak_delay = peak_lag(chest, abd, fs)
+    amp_ratio = np.std(chest) / (np.std(abd) + 1e-8)
+    phase_lock = phase_locking(chest, abd)
+    return {"r": r, "ccc": ccc, "lag": lag, "peak_lag": peak_delay,
+            "amp_ratio": amp_ratio, "phase_lock": phase_lock}
+
+
+def process_synchrony_pair(pair, raw_psg, STAGE_MAP, hypnogram):
+    if not (pair[0] in raw_psg.ch_names and pair[1] in raw_psg.ch_names):
+        return []
+
+    fs = raw_psg.info["sfreq"]
+    left, _ = raw_psg[pair[0]]
+    right, _ = raw_psg[pair[1]]
+    left, right = left.ravel(), right.ravel()
+
+    # Align hypnogram
+    hyp = np.repeat(hypnogram, int(fs * 30))
+    min_len = min(len(left), len(right), len(hyp))
+    left, right, hyp = left[:min_len], right[:min_len], hyp[:min_len]
+
+    pair_results = []
+    for stage_val, stage_name in STAGE_MAP.items():
+        mask = (hyp == stage_val)
+        if np.sum(mask) < 5:
+            continue
+
+        sync_feats = synchrony_features(left[mask], right[mask], fs)
+        # We store these with metadata so we can merge them later
+        pair_results.append({
+            "pair": tuple(pair),
+            "stage": stage_name,
+            **sync_feats
+        })
+    return pair_results
+
+
 def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                      processed=True):
     # -----------------------------
     # Generic Features (all channels)
     # -----------------------------
+
+    time_1 = time.perf_counter()
+
+    row_dict = extract_tsfresh_generic(data)
+    row_dict.update({
+        "channel": ch_name,
+        "category": category,
+        "flatline_pct": np.mean(np.abs(np.diff(data)) < 1e-6),
+        "clipping_pct": np.mean((data == data.min()) | (data == data.max()))
+    })
+
     mean_val = data.mean()
     std_val = data.std()
     var_val = std_val ** 2
-    skew_val = skew(data)
-    kurt_val = kurtosis(data)
-
-    flat_pct = np.mean(np.abs(np.diff(data)) < 1e-6)
-
-    clip_pct = np.mean(
-        (data == data.min()) |
-        (data == data.max())
-    )
 
     f, Pxx = welch(data, fs, nperseg=min(4096, len(data)))
     total_power = np.trapezoid(Pxx, f)
     hf_power = np.sum(Pxx[f > 30]) if len(f) > 0 else 0
     lf_power = np.sum(Pxx[(f >= 0.5) & (f <= 4)]) if len(f) > 0 else 0
-
     hf_ratio = hf_power / total_power if total_power > 0 else 0
     lf_ratio = lf_power / total_power if total_power > 0 else 0
-
-    # Initialize row
-    # print("Calculating generic features")
-    row_dict = {
-        "channel": ch_name,
-        "category": category,
+    row_dict.update({
         "mean": mean_val,
         "std": std_val,
         "variance": var_val,
-        "skewness": skew_val,
-        "kurtosis": kurt_val,
-        "flatline_pct": flat_pct,
-        "clipping_pct": clip_pct,
         "hf_power_ratio": hf_ratio,
         "lf_power_ratio": lf_ratio,
-    }
-    # print("Generic feature calculation done")
+    })
+
+    time_2 = time.perf_counter()
+
+    # Initialize row
+    # print("Calculating generic features")
+
+    #print(f"Generic feature calculation time: {time_2 - time_1}")
 
     # -----------------------------
     # EEG-specific Features
     # -----------------------------
     if category == "eeg":
         # print("Calculating eeg features")
-        row_dict["rms"] = rms_amplitude(data)
+        time_3 = time.perf_counter()
+        # row_dict["sample_entropy"] = tsf.sample_entropy(data)
+        # row_dict["approx_entropy"] = tsf.approximate_entropy(data, m=2,r=2 * std_val)
+        # row_dict["perm_entropy"] = tsf.permutation_entropy(data)
+        # row_dict["lempel_ziv"] = tsf.lempel_ziv_complexity(data, bins=5)
+        # row_dict["time_rev_asym"] = tsf.time_reversal_asymmetry_statistic(data,lag=int(fs * 0.02))
+        row_dict["num_peaks"] = tsf.number_peaks(data, n=5)
+        # row_dict["fourier_entropy"] = tsf.fourier_entropy(data, bins=10)
+        # row_dict["rms"] = rms_amplitude(data)
+        row_dict["rms"] = tsf.root_mean_square(data)
         row_dict["ptp"] = peak_to_peak(data)
         row_dict["max_amp"] = np.max(data)
         # row_dict["dominant_freq"] = dominant_frequency(data, fs)
@@ -311,19 +496,17 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                         len(coupled) / n_sw if n_sw > 0 else 0
                     )
 
-                    row_dict["sw_spindle_phase_mean"] = coupled["SpindlePhase"].mean()
-                    row_dict["sw_spindle_phase_std"] = coupled["SpindlePhase"].std()
+                    row_dict["sw_spindle_phase_mean"] = coupled[
+                        "SpindlePhase"].mean()
+                    row_dict["sw_spindle_phase_std"] = coupled[
+                        "SpindlePhase"].std()
 
-                    row_dict["sw_spindle_delay_mean"] = coupled["SpindleDelay"].mean()
-                    row_dict["sw_spindle_delay_std"] = coupled["SpindleDelay"].std()
+                    row_dict["sw_spindle_delay_mean"] = coupled[
+                        "SpindleDelay"].mean()
+                    row_dict["sw_spindle_delay_std"] = coupled[
+                        "SpindleDelay"].std()
 
                 else:
-                    row_dict["sw_spindle_coupling_count"] = 0
-                    row_dict["sw_spindle_coupling_ratio"] = 0
-                    row_dict["sw_spindle_phase_mean"] = 0
-                    row_dict["sw_spindle_phase_std"] = 0
-                    row_dict["sw_spindle_delay_mean"] = 0
-                    row_dict["sw_spindle_delay_std"] = 0
 
                     row_dict["sw_count"] = 0
                     row_dict["sw_density"] = 0
@@ -340,6 +523,26 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                     row_dict["sw_spindle_phase_std"] = 0
                     row_dict["sw_spindle_delay_mean"] = 0
                     row_dict["sw_spindle_delay_std"] = 0
+            else:
+
+                row_dict["sw_count"] = 0
+                row_dict["sw_density"] = 0
+                row_dict["sw_mean_amp"] = 0
+                row_dict["sw_amp_std"] = 0
+                row_dict["sw_mean_duration"] = 0
+                row_dict["sw_duration_std"] = 0
+                row_dict["sw_mean_freq"] = 0
+                row_dict["sw_total_duration"] = 0
+
+                row_dict["sw_spindle_coupling_count"] = 0
+                row_dict["sw_spindle_coupling_ratio"] = 0
+                row_dict["sw_spindle_phase_mean"] = 0
+                row_dict["sw_spindle_phase_std"] = 0
+                row_dict["sw_spindle_delay_mean"] = 0
+                row_dict["sw_spindle_delay_std"] = 0
+            time_4 = time.perf_counter()
+            #print(f"EEG calculation time: {time_4 - time_3}")
+            #print(f"Total calculation time: {time_4 - time_1}")
 
         except Exception as e:
             print(f"EEG extraction error: {e}")
@@ -381,6 +584,12 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
     # -----------------------------
     elif category == "ecg":
         # print("Calculating ecg features")
+        time_5 = time.perf_counter()
+        row_dict["cid_ce"] = tsf.cid_ce(data, normalize=True)
+        row_dict["mean_2nd_deriv_central"] = tsf.mean_second_derivative_central(
+            data)
+        # row_dict["sample_entropy"] = tsf.sample_entropy(data)
+
         row_dict["rms"] = rms_amplitude(data)
         row_dict["ptp"] = peak_to_peak(data)
         row_dict["max_amp"] = np.max(data)
@@ -389,8 +598,9 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                                                           tolerance=1.5)
         row_dict["is_flat"] = is_flat_signal(data)
         row_dict["amp_out_of_bounds"] = amplitude_out_of_bounds(data)
-        row_dict["hf_ratio_signal"] = high_frequency_ratio(data, fs)
+        row_dict["hf_ratio_signal"] = high_frequency_ratio(Pxx, f)
         row_dict["max_slope"] = max_slope(data, fs)
+
         # print("Ecg feature calculations done")
         try:
             '''
@@ -451,7 +661,9 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
             row_dict["HF_NORM"] = hrv_biomarker["HF_NORM"]
             row_dict["LF_HF_RATIO"] = hrv_biomarker["LF_HF_RATIO"]
             # print("HRV feature calculations done")
-
+            time_6 = time.perf_counter()
+            #print(f"ECG claculation time: {time_6 - time_5}")
+            #print(f"Total time: {time_6 - time_1}")
 
         except Exception as e:
             print(f"ECG extraction error: {e}")
@@ -488,31 +700,56 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
     # -----------------------------
     elif category in ["chin emg", "leg emg"]:
         # print("Calculating EMG features")
-        row_dict["powerline_ratio"] = powerline_ratio(data, fs)
-        row_dict["hf_ratio_signal"] = high_frequency_ratio(data, fs)
-        row_dict["spec_peak_min_ratio"] = spectral_peak_to_min_ratio(data, fs)
-        # print("EMG feature calculations done")
+        time_7 = time.perf_counter()
+        row_dict["powerline_ratio"] = powerline_ratio(Pxx, f)
+        row_dict["hf_ratio_signal"] = high_frequency_ratio(Pxx, f)
+        row_dict["spec_peak_min_ratio"] = np.max(Pxx) / (np.min(Pxx) + 1e-12)
+        row_dict["rms"] = tsf.root_mean_square(data)
+        row_dict["energy_ratio_chunks"] = \
+        tsf.energy_ratio_by_chunks(data, param=[{"num_segments": 10,
+                                                 "segment_focus": 5}])[0][1]
+        row_dict["num_peaks"] = tsf.number_peaks(data, n=3)
+        time_8 = time.perf_counter()
+        #print(f"EMG feature calculations time{time_8 - time_7}")
+        #print(f"Total_time{time_8 - time_1}")
     # -----------------------------
     # Respiratory Features
     # -----------------------------
     elif category == "resp":
-
+        time_9 = time.perf_counter()
         try:
             # print("Calculating respiratory features")
-            resp_cleaned = nk.rsp_clean(data, sampling_rate=fs)
+            if ch_name == "spo2":
+                # SpO2 specific: Simple artifact removal, NO bio-respiratory cleaning
+                resp_cleaned = nk.signal_filter(data, sampling_rate=fs,
+                                                highcut=0.1,
+                                                method='butterworth')
+            elif ch_name in ["cflow", "cpres"]:
+                # CPAP specific: Gentle lowpass
+                resp_cleaned = nk.signal_filter(data, sampling_rate=fs,
+                                                highcut=2.0)
+            else:
+                # ABD, CHEST, PTAF, AIRFLOW: Standard respiratory cleaning
+                resp_cleaned = nk.rsp_clean(data, sampling_rate=fs)
+
             peaks, info = nk.rsp_peaks(resp_cleaned, sampling_rate=fs)
 
             intervals = np.diff(peaks["RSP_Peaks"]) / fs
-            mean_int = np.mean(intervals)
+            mean_int = np.mean(intervals) if len(intervals) > 0 else 0
             mean_rr = 60 / mean_int if (
-                    len(intervals) > 0 and mean_int != 0) else np.nan
+                        len(intervals) > 0 and mean_int != 0) else np.nan
             resp_var = np.std(intervals) if len(intervals) > 0 else np.nan
 
             row_dict["mean_resp_rate"] = mean_rr
             row_dict["resp_variability"] = resp_var
+            row_dict["linear_trend"] = \
+                tsf.linear_trend(data, param=[{"attr": "slope"}])[0][1]
+            # row_dict["approx_entropy"] = tsf.approximate_entropy(data, m=2,r=2 * std_val)
             # currently problematic due to using an old scipy version
+            time_10 = time.perf_counter()
+            #print(f"Respiratory feature calculations time:{time_10 - time_9}")
+            #print(f"Total time: {time_10 - time_1}")
             '''
-            print("Respiratory feature calculations done")
             if ch_name == "spo2":
                 print("Calculating spo2 features")
                 spo2_df = get_spo2_biomarkers(data, fs, patient_name="unknown")
@@ -524,7 +761,7 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
                     for col in spo2_row.index:
                         if col not in ["patient", "time begin", "time end"]:
                             row_dict[col] = spo2_row[col]
-                    print("Spo2 feature calculations done")
+                    #print("Spo2 feature calculations done")
             else:
                 for col in [
                     "AV", "MED", "Min", "SD", "RG", "P",
@@ -543,6 +780,8 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
             print(f"SPO2 extraction error: {e}")
             row_dict["mean_resp_rate"] = np.nan
             row_dict["resp_variability"] = np.nan
+            row_dict["linear_trend"] = np.nan
+            # row_dict["approx_entropy"] = np.nan
             '''
             for col in [
                 "AV", "MED", "Min", "SD", "RG", "P",
@@ -559,7 +798,8 @@ def extract_features(data, fs, ch_name, category, hypnogram_subset=None,
     return row_dict
 
 
-def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,processed=True):
+def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,
+                    processed=True):
     data, _ = raw_psg[ch_name]
     data = data.ravel()
     fs = raw_psg.info["sfreq"]
@@ -576,20 +816,21 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,processed=
         res = extract_features(data, fs, ch_name, category, None, processed)
         return [{**res, "stage": "All"}] if res else []
 
-    hypnogram = np.repeat(hypnogram, int(fs*30)) #Not having this caused so much problems.
+    hypnogram = np.repeat(hypnogram,
+                          int(fs * 30))  # Not having this caused so much problems.
 
     min_len = min(len(data), len(hypnogram))
     data = data[:min_len]
     hypnogram = hypnogram[:min_len]
 
-    #print(f"DEBUG: Channel {ch_name} data length: {len(data)}")
-    #print(f"DEBUG: Hypnogram data length: {len(hypnogram)}")
+    # print(f"DEBUG: Channel {ch_name} data length: {len(data)}")
+    # print(f"DEBUG: Hypnogram data length: {len(hypnogram)}")
 
     stage_results = []
     unique_stages = np.unique(hypnogram)
-    #print(unique_stages)
+    # print(unique_stages)
     for stage_val in unique_stages:
-        #stage_name = STAGE_MAP.get(stage_val, f"Unknown_{stage_val}")
+        # stage_name = STAGE_MAP.get(stage_val, f"Unknown_{stage_val}")
         if stage_val not in STAGE_MAP:
             continue  # We don't need the undefined stages
         stage_name = STAGE_MAP[stage_val]
@@ -599,11 +840,10 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,processed=
         stage_data = data[mask]
         stage_hypno = hypnogram[mask]
 
-        #print(  f"DEBUG: {ch_name} Stage {stage_name} has {len(stage_data)} samples.")
-        #print(f"DEBUG: Threshold is {fs * 10}")
+        # print(  f"DEBUG: {ch_name} Stage {stage_name} has {len(stage_data)} samples.")
+        # print(f"DEBUG: Threshold is {fs * 10}")
 
-        if len(stage_data) < fs * 10:  # Skip stages shorter than 10 seconds
-        #if len(stage_data)<10: #I thought 10 second stages were too long, but it turned out the hypnograms were 30 seconds long in each datapoint
+        if len(stage_data) < 5:  # Originally skipped stages shorter than 10 seconds, turned out that's too much
             continue
 
         features = extract_features(stage_data, fs, ch_name, category,
@@ -617,9 +857,7 @@ def process_channel(ch_name, raw_psg, category_lookup, hypnogram=None,processed=
 
 def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,
                           processed=True):
-    quality_metrics = []
-
-    results = Parallel(n_jobs=2)(
+    results = Parallel(n_jobs=2, prefer="threads")(
         delayed(process_channel)(
             ch, raw_psg, category_lookup, hypnogram, processed
         )
@@ -630,117 +868,264 @@ def assess_signal_quality(raw_psg, category_lookup, hypnogram=None,
     for r in results:
         if r:
             flattened.extend(r)
+    flattened = pd.DataFrame(flattened)
 
-    return pd.DataFrame(flattened)
+    if hypnogram is not None:
+        synchron_pairs = [
+            ["chest", "abd"], ["e1", "e2"], ["e1-m2", "e2-m1"], ["f3", "f4"],
+            ["f3-m2", "f4-m1"], ["c3", "c4"], ["c3-m2", "c4-m1"], ["o1", "o2"],
+            ["o1-m2", "o2-m1"], ["rleg+", "lleg+"], ["rleg-", "lleg-"]
+        ]
 
+        sync_results = Parallel(n_jobs=-2, prefer="threads")(
+            delayed(process_synchrony_pair)(pair, raw_psg, STAGE_MAP, hypnogram)
+            for pair in synchron_pairs
+        )
 
-# 3.2 Helper functions for EEG----------------------
+        sync_flattened = [item for sublist in sync_results if sublist for item
+                          in sublist]
 
-def rms_amplitude(x):
-    return np.sqrt(np.mean(x ** 2))
+        if sync_flattened:
+            # Map synchrony results back to the main dataframe
+            for res in sync_flattened:
+                p1, p2 = res['pair']
+                stage = res['stage']
+                feats = {k: v for k, v in res.items() if
+                         k not in ['pair', 'stage']}
 
+                # Update rows where channel is part of the pair AND stage matches
+                mask = (flattened['stage'] == stage) & (
+                    flattened['channel'].isin([p1, p2]))
+                for col, val in feats.items():
+                    flattened.loc[mask, col] = val
 
-def peak_to_peak(x):
-    return np.max(x) - np.min(x)
-
-
-def signal_std(x):
-    return np.std(x)
-
-
-def max_abs_amplitude(x):
-    return np.max(np.abs(x))
-
-
-def percent_above_threshold(x, threshold):
-    return np.mean(np.abs(x) > threshold)
-
-
-def dominant_frequency(x, fs):
-    f, Pxx = welch(x, fs=fs, nperseg=min(len(x), fs * 4))
-    return f[np.argmax(Pxx)]
-
-
-def bandpower(x, fs, band, relative=False):
-    f, Pxx = welch(x, fs=fs, nperseg=min(len(x), fs * 4))
-    idx = np.logical_and(f >= band[0], f <= band[1])
-    band_power = np.trapezoid(Pxx[idx], f[idx])
-
-    if relative:
-        total_power = np.trapezoid(Pxx, f)
-        return band_power / total_power if total_power > 0 else 0
-
-    return band_power
+    return flattened
 
 
-def bandpower_from_psd(f, Pxx, band):
-    idx = (f >= band[0]) & (f <= band[1])
-    return np.trapezoid(Pxx[idx], f[idx])
+def stratified_pca_feature_selection(df, y, params):
+    base_meta_cols = ['BMI', 'Age', 'Race_Asian', 'Race_Black',
+                      'Race_Others', 'Race_Unavailable',
+                      'Race_White', 'Sex_Female', 'Sex_Male']
+    base_annotation_cols = ["Ahi_auto", "Ar_auto", "Limb_auto", "W_pct",
+                            "N1_pct", "N2_pct", "N3_pct", "R_pct", "efficiency",
+                            "W_prob", "N3_prob", "Ar_prob"]
 
+    categories = ['ecg', 'eeg', 'eog', 'emg', 'resp']
+    stages = ["N1", "N2", "N3", "Wake", "REM"]
 
-# 3.3 ECG helper functions-----------------------------------------------
-def flatline_duration(x, fs, tolerance=1e-6):
-    diff = np.abs(np.diff(x))
-    flat = diff < tolerance
-    flat_samples = np.sum(flat)
-    return flat_samples / fs
+    groups = df["subject"]
 
+    gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+    train_idx, test_idx = next(gss.split(df, y, groups))
+    gkf = GroupKFold(n_splits=5)
 
-def is_flat_signal(x, threshold=1e-8):
-    return np.var(x) < threshold
+    train_df = df.iloc[train_idx]
+    test_df = df.iloc[test_idx]
 
+    X_train = train_df.drop(
+        columns=["Cognitive_Impairment", "subject", "session"])
+    X_test = test_df.drop(
+        columns=["Cognitive_Impairment", "subject", "session"])
 
-def amplitude_out_of_bounds(x, low=0.2, high=15.0):
-    ptp = peak_to_peak(x)
-    return ptp < low or ptp > high
+    y_train = y.iloc[train_idx]
+    y_test = y.iloc[test_idx]
 
+    results = []
 
-def max_slope(x, fs):
-    dx = np.diff(x) * fs
-    return np.max(np.abs(dx))
+    component_nums = [10, 20, 30, 40, 50, 100, 200, 250, 300, 400, 500, 750]
+    limits = [1, 2, 4, 6, 16, 17, 20, 25, 26, 29, 61, 129, 202, 265, 334, 451,
+              461, 567, 597, 599]
 
+    strata_list = []
+    for cat in categories:
+        strata_list.append(('category', cat))
+    for stg in stages:
+        strata_list.append(('stage', stg))
+    for cat in categories:
+        for stg in stages:
+            strata_list.append(('both', (cat, stg)))
 
-def high_frequency_ratio(x, fs, cutoff=40):
-    f, Pxx = welch(x, fs=fs)
-    hf_power = np.trapezoid(Pxx[f > cutoff], f[f > cutoff])
-    total_power = np.trapezoid(Pxx, f)
-    return hf_power / total_power if total_power > 0 else 0
+    for type, val in strata_list:
 
+        if type == 'category':
+            cols = [c for c in X_train.columns if val in c.lower()]
 
-# 3.4 EMG helper functions-------------------------------------
-def powerline_ratio(x, fs, line_freq=50, bandwidth=1):
-    f, Pxx = welch(x, fs=fs)
-    idx_line = np.logical_and(f >= line_freq - bandwidth,
-                              f <= line_freq + bandwidth)
-    line_power = np.trapezoid(Pxx[idx_line], f[idx_line])
-    total_power = np.trapezoid(Pxx, f)
-    return line_power / total_power if total_power > 0 else 0
+        elif type == 'stage':
+            cols = [c for c in X_train.columns if val in c]
 
+        else:
+            cat, stg = val
+            cols = [c for c in X_train.columns if cat in c.lower() and stg in c]
 
-def signal_to_high_freq_ratio(x, fs, hf_cut=100):
-    f, Pxx = welch(x, fs=fs)
-    hf_power = np.trapezoid(Pxx[f > hf_cut], f[f > hf_cut])
-    signal_power = np.trapezoid(Pxx[f <= hf_cut], f[f <= hf_cut])
-    return signal_power / hf_power if hf_power > 0 else np.inf
+        if len(cols) == 0:
+            continue
 
+        cols = [c for c in (cols + base_meta_cols + base_annotation_cols) if
+                c in X_train.columns]
 
-def spectral_peak_to_min_ratio(x, fs):
-    f, Pxx = welch(x, fs=fs)
-    return np.max(Pxx) / (np.min(Pxx) + 1e-12)
+        X_tr_sub = X_train[cols]
+        X_te_sub = X_test[cols]
 
+        strata_model = XGBClassifier(**params, enable_categorical=True,
+                                     tree_method="hist", random_state=42)
+        strata_model.fit(X_tr_sub, y_train)
 
-def spectral_peak_to_min_ratio(x, fs):
-    f, Pxx = welch(x, fs=fs)
-    return np.max(Pxx) / (np.min(Pxx) + 1e-12)
+        # probs = strata_model.predict_proba(X_te_sub)[:,1]
+        # auc = metrics.roc_auc_score(y_test, probs)
 
+        aucs = []
 
-def windowed_feature(x, fs, window_sec, feature_fn, **kwargs):
-    win_samples = int(window_sec * fs)
-    n_windows = len(x) // win_samples
-    values = []
+        for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
+            X_tr_fold = X_tr_sub.iloc[tr_idx]
+            X_val_fold = X_tr_sub.iloc[val_idx]
+            y_tr_fold = y_train.iloc[tr_idx]
+            y_val_fold = y_train.iloc[val_idx]
 
-    for i in range(n_windows):
-        segment = x[i * win_samples:(i + 1) * win_samples]
-        values.append(feature_fn(segment, fs=fs, **kwargs))
+            strata_model.fit(X_tr_fold, y_tr_fold)
+            probs = strata_model.predict_proba(X_val_fold)[:, 1]
+            aucs.append(metrics.roc_auc_score(y_val_fold, probs))
 
-    return np.array(values)
+        auc = np.mean(aucs)
+
+        results.append((cols, strata_model.feature_importances_, auc))
+
+        best_auc = auc
+        best_tr_subset = X_tr_sub
+        best_te_subset = X_te_sub
+
+        for limit in limits:  # pre filtering using NaN counts
+            if limit > len(X_tr_sub):
+                continue
+            X_tr_filt = X_tr_sub.dropna(thresh=limit, axis=1)
+            X_te_filt = X_te_sub[X_tr_filt.keys()]
+            filter_model = XGBClassifier(**params, random_state=42,
+                                         enable_categorical=True,
+                                         tree_method="hist")
+            # filter_model.fit(X_tr_filt, y_train)
+            # probs = filter_model.predict_proba(X_te_filt)[:, 1]
+            # auc = metrics.roc_auc_score(y_test, probs)
+
+            aucs = []
+
+            for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
+                X_tr_fold = X_tr_filt.iloc[tr_idx]
+                X_val_fold = X_tr_filt.iloc[val_idx]
+                y_tr_fold = y_train.iloc[tr_idx]
+                y_val_fold = y_train.iloc[val_idx]
+
+                filter_model.fit(X_tr_fold, y_tr_fold)
+                probs = filter_model.predict_proba(X_val_fold)[:, 1]
+                aucs.append(metrics.roc_auc_score(y_val_fold, probs))
+
+            auc = np.mean(aucs)
+
+            results.append(
+                (X_tr_filt.keys(), filter_model.feature_importances_, auc))
+            if best_auc < auc:
+                best_auc = auc
+                best_tr_subset = X_tr_filt
+                best_te_subest = X_te_filt
+        # PCA and RFE versions
+        for comp in component_nums:
+
+            if best_tr_subset.shape[1] < comp:
+                continue
+
+            imputer = SimpleImputer(strategy='median', add_indicator=True)
+            scaler = StandardScaler()
+            pca = PCA(n_components=comp, random_state=42)
+
+            X_tr = scaler.fit_transform(imputer.fit_transform(best_tr_subset))
+            X_te = scaler.transform(imputer.transform(best_te_subset))
+
+            n_samples, n_features = X_tr.shape
+            max_possible_components = min(n_samples, n_features)
+
+            if comp > max_possible_components:
+                continue
+
+            corr_matrix = best_tr_subset.corr().abs()
+            avg_corr = np.nanmean(
+                corr_matrix.values[np.triu_indices_from(corr_matrix, k=1)])
+
+            if avg_corr > 0.6 or type == "stage" or val == "resp":
+                # PCA because stages and respiratory data are multimodal
+                X_tr_pca = pca.fit_transform(X_tr)
+                X_te_pca = pca.transform(X_te)
+
+                pca_model = XGBClassifier(**params, tree_method="hist",
+                                          enable_categorical=True,
+                                          random_state=42)
+                # pca_model.fit(X_tr_pca, y_train)
+                # probs = pca_model.predict_proba(X_te_pca)[:,1]
+                # auc = metrics.roc_auc_score(y_test, probs)
+
+                aucs = []
+
+                for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
+                    X_tr_fold = X_tr_pca.iloc[tr_idx]
+                    X_val_fold = X_tr_pca.iloc[val_idx]
+                    y_tr_fold = y_train.iloc[tr_idx]
+                    y_val_fold = y_train.iloc[val_idx]
+
+                    pca_model.fit(X_tr_fold, y_tr_fold)
+                    probs = pca_model.predict_proba(X_val_fold)[:, 1]
+                    aucs.append(metrics.roc_auc_score(y_val_fold, probs))
+
+                auc = np.mean(aucs)
+
+                loadings = np.abs(pca.components_)
+                weighted_loadings = np.dot(pca_model.feature_importances_,
+                                           loadings)
+
+                results.append(
+                    (best_tr_subset.columns.tolist(), weighted_loadings, auc))
+            else:
+                # RFE, because in our experiences gave better results on data of singular modality
+                step_size = max(1, int((len(best_tr_subset.columns) - comp) / 10))  # Recursion is very slow on high dimensional data
+                RFE_model = RFE(XGBClassifier(**params, tree_method="hist",
+                                              enable_categorical=True,
+                                              random_state=42),
+                                n_features_to_select=comp, step=step_size)
+                # RFE_model.fit(X_tr, y_train)
+                # probs = RFE_model.predict_proba(X_te)[:, 1]
+                # auc = metrics.roc_auc_score(y_test, probs)
+                aucs = []
+
+                for tr_idx, val_idx in gkf.split(X_tr_sub, y_train, groups.iloc[train_idx]):
+                    X_tr_fold = X_tr.iloc[tr_idx]
+                    X_val_fold = X_tr.iloc[val_idx]
+                    y_tr_fold = y_train.iloc[tr_idx]
+                    y_val_fold = y_train.iloc[val_idx]
+
+                    RFE_model.fit(X_tr_fold, y_tr_fold)
+                    probs = RFE_model.predict_proba(X_val_fold)[:, 1]
+                    aucs.append(metrics.roc_auc_score(y_val_fold, probs))
+
+                auc = np.mean(aucs)
+
+                selected_mask = RFE_model.support_
+                selected_features = best_tr_subset.columns[
+                    selected_mask].tolist()
+
+                results.append((best_tr_subset.columns.tolist(),
+                                RFE_model.estimator_.feature_importances_, auc))
+
+    # accumulate global weights
+    feature_weights = {}
+
+    for cols, weights, auc in results:
+
+        if auc < 0.53:
+            continue
+
+        for f, w in zip(cols, weights):
+            feature_weights[f] = feature_weights.get(f, 0) + w * auc
+
+    sorted_features = sorted(feature_weights.items(),
+                             key=lambda x: x[1],
+                             reverse=True)
+
+    ranked = [f[0] for f in sorted_features]
+
+    return ranked
