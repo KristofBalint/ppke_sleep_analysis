@@ -8,7 +8,25 @@ from scipy.signal import resample
 from sleepfm_clinical.sleepfm.models.models import SetTransformer
 import torch
 from torch import nn
+'''
+import os
+import logging
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+LOG_FILE_PATH = os.path.join(SCRIPT_DIR, "SleepFMIntegrator.log")
+
+logging.basicConfig(
+    filename=LOG_FILE_PATH,
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)s %(message)s",
+    filemode="w",
+    force=True,
+    # Important: force reconfiguration if logging was initialized elsewhere
+)
+
+logger = logging.getLogger(__name__)
+'''
 
 @dataclass
 class SleepFMConfig:
@@ -61,9 +79,9 @@ class SleepFMConfig:
     dropout: float = 0.10
     maximum_sequence_length: int = 2048
     challenge_mode: bool = True
-    
+
     # Channel handling
-    
+
     modality_types: Sequence[str] = (
         "BAS",
         "RESP",
@@ -135,10 +153,12 @@ class SleepFMConfig:
 
     # Debugging
 
+    debug: bool = True
     verbose: bool = False
     profile_runtime: bool = False
     save_attention_maps: bool = False
     save_intermediate_embeddings: bool = False
+
 
 class SleepFMPreprocessor:
     """
@@ -160,20 +180,21 @@ class SleepFMPreprocessor:
         self.config = config
         self.fs = config.expected_sampling_frequency
         self.window_samples = (
-            config.window_length_seconds
-            * config.expected_sampling_frequency
+                config.window_length_seconds
+                * config.expected_sampling_frequency
         )
         self.stride_samples = (
-            config.window_stride_seconds
-            * config.expected_sampling_frequency
+                config.window_stride_seconds
+                * config.expected_sampling_frequency
         )
 
     # Public API
 
-    def preprocess(self,modality_signals: Dict[str, Dict[str, np.ndarray]],
-                     sampling_frequencies: Optional[Union[int, Dict[str, Union[int, Dict[str, int]]]]] = None, 
-                     ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-    #def preprocess(self,modality_signals: Dict[str, Dict[str, np.ndarray]]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    def preprocess(self, modality_signals: Dict[str, Dict[str, np.ndarray]],
+                   sampling_frequencies: Optional[Union[
+                       int, Dict[str, Union[int, Dict[str, int]]]]] = None,
+                   ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+        # def preprocess(self,modality_signals: Dict[str, Dict[str, np.ndarray]]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """
         Parameters
         ----------
@@ -204,7 +225,7 @@ class SleepFMPreprocessor:
                 mod_fs = sampling_frequencies
             else:
                 mod_fs = sampling_frequencies
-            tensor, mask = self._process_modality(modality,signals, mod_fs)
+            tensor, mask = self._process_modality(modality, signals, mod_fs)
 
             modality_tensors.append(tensor)
             modality_masks.append(mask)
@@ -213,25 +234,27 @@ class SleepFMPreprocessor:
 
     # Processing pipeline
 
-    def _process_modality(self,modality: str,signals: Dict[str, np.ndarray],original_fs: Optional[Union[int, Dict[str, int]]] = None):
+    def _process_modality(self, modality: str, signals: Dict[str, np.ndarray],
+                          original_fs: Optional[
+                              Union[int, Dict[str, int]]] = None):
 
         processed = []
         for channel_name, signal in signals.items():
-            chan_fs = original_fs.get(channel_name) if isinstance(original_fs, dict) else original_fs 
+            chan_fs = original_fs.get(channel_name) if isinstance(original_fs,
+                                                                  dict) else original_fs
             signal = self._validate_signal(signal)
             signal = self._resample(signal, original_fs=chan_fs)
             signal = self._normalize(signal)
-            windowed = self.create_windows(signal) 
+            windowed = self.create_windows(signal)
             processed.append(windowed)
-            
 
-        tensor, mask = self._stack_channels(processed,modality)
+        tensor, mask = self._stack_channels(processed, modality)
 
         return tensor, mask
 
     # Validation
 
-    def _validate_signal(self,signal: np.ndarray) -> np.ndarray:
+    def _validate_signal(self, signal: np.ndarray) -> np.ndarray:
 
         signal = np.asarray(signal).astype(np.float32)
         signal = np.nan_to_num(signal)
@@ -243,15 +266,16 @@ class SleepFMPreprocessor:
 
     # Resampling
 
-    def _resample(self,signal: np.ndarray,original_fs: Optional[int] = None) -> np.ndarray:
+    def _resample(self, signal: np.ndarray,
+                  original_fs: Optional[int] = None) -> np.ndarray:
         if original_fs is None or original_fs == self.fs:
             return signal
-        target_length = int(len(signal)* self.fs/ original_fs)
+        target_length = int(len(signal) * self.fs / original_fs)
         return resample(signal, target_length)
 
     # Normalisation
 
-    def _normalize(self,signal: np.ndarray) -> np.ndarray:
+    def _normalize(self, signal: np.ndarray) -> np.ndarray:
 
         if not self.config.normalize_signals:
             return signal
@@ -260,7 +284,7 @@ class SleepFMPreprocessor:
             std = signal.std()
             if std > 0:
                 signal = (signal - signal.mean()) / std
-                
+
         elif self.config.normalization_method == "minmax":
             mn = signal.min()
             mx = signal.max()
@@ -268,53 +292,66 @@ class SleepFMPreprocessor:
                 signal = (signal - mn) / (mx - mn)
 
         if self.config.clip_value is not None:
-            signal = np.clip(signal,-self.config.clip_value,self.config.clip_value)
+            signal = np.clip(signal, -self.config.clip_value,
+                             self.config.clip_value)
 
         return signal.astype(np.float32)
 
     # Windowing
 
-    def create_windows(self,signal: np.ndarray) -> np.ndarray:
+    def create_windows(self, signal: np.ndarray) -> np.ndarray:
         if len(signal) == 0:
             return np.empty((0, self.window_samples), dtype=np.float32)
         if len(signal) < self.window_samples:
-            signal = np.pad(signal, (0, self.window_samples - len(signal)), mode='constant')
+            signal = np.pad(signal, (0, self.window_samples - len(signal)),
+                            mode='constant')
         windows = []
-        for start in range(0,len(signal)- self.window_samples + 1,self.stride_samples):
+        for start in range(0, len(signal) - self.window_samples + 1,
+                           self.stride_samples):
             windows.append(signal[start:start + self.window_samples])
         if len(windows) == 0:
-            return np.empty((0, self.window_samples), dtype=np.float32) 
+            return np.empty((0, self.window_samples), dtype=np.float32)
         return np.asarray(windows, dtype=np.float32)
 
     # Channel padding
 
-    def _stack_channels(self, windows_list: List[np.ndarray], modality: str) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _stack_channels(self, windows_list: List[np.ndarray], modality: str) -> \
+    Tuple[torch.Tensor, torch.Tensor]:
         max_channels = self.config.maximum_channels_per_modality[modality]
-        
+
         # Check if any channel returned non-empty windows
-        has_valid_windows = any(isinstance(w, np.ndarray) and w.ndim == 2 and w.shape[0] > 0 for w in windows_list)
+        has_valid_windows = any(
+            isinstance(w, np.ndarray) and w.ndim == 2 and w.shape[0] > 0 for w
+            in windows_list)
 
         if not has_valid_windows:
             # Explicitly force shape (max_channels, 1, window_samples) with all channels masked out
-            tensor = torch.zeros((max_channels, 1, self.window_samples), dtype=torch.float32)
-            mask = torch.ones(max_channels, dtype=torch.bool)  # True = masked/ignored channel
+            tensor = torch.zeros((max_channels, 1, self.window_samples),
+                                 dtype=torch.float32)
+            mask = torch.ones(max_channels,
+                              dtype=torch.bool)  # True = masked/ignored channel
             return tensor, mask
 
         # Filter out empty arrays if some channels in the modality had signals and others were empty
-        valid_windows = [w for w in windows_list if isinstance(w, np.ndarray) and w.ndim == 2 and w.shape[0] > 0]
+        valid_windows = [w for w in windows_list if
+                         isinstance(w, np.ndarray) and w.ndim == 2 and w.shape[
+                             0] > 0]
         num_windows = valid_windows[0].shape[0]
 
-        stacked = np.stack(valid_windows, axis=0)  # Shape: (channels, num_windows, window_samples)
+        stacked = np.stack(valid_windows,
+                           axis=0)  # Shape: (channels, num_windows, window_samples)
         channels = stacked.shape[0]
 
-        padded = np.zeros((max_channels, num_windows, self.window_samples), dtype=np.float32)
+        padded = np.zeros((max_channels, num_windows, self.window_samples),
+                          dtype=np.float32)
         padded[:channels] = stacked
 
         mask = np.ones(max_channels, dtype=bool)
         mask[:channels] = False  # False = active channel
 
         return torch.from_numpy(padded), torch.from_numpy(mask)
-        
+
+
 class SleepFMCheckpoint:
     """
     Handles loading, saving and configuring pretrained SleepFM models.
@@ -328,7 +365,8 @@ class SleepFMCheckpoint:
 
     # Checkpoint loading
 
-    def load_backbone(self,model: nn.Module,checkpoint_path: Optional[Path] = None,) -> nn.Module:
+    def load_backbone(self, model: nn.Module,
+                      checkpoint_path: Optional[Path] = None, ) -> nn.Module:
 
         if checkpoint_path is None:
             checkpoint_path = self.config.checkpoint_path
@@ -343,14 +381,15 @@ class SleepFMCheckpoint:
         if not checkpoint_path.exists():
             raise FileNotFoundError(checkpoint_path)
 
-        checkpoint = torch.load(checkpoint_path,map_location=self.device,)
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, )
 
         state_dict = self._extract_state_dict(checkpoint)
 
-        incompatible = model.load_state_dict(state_dict,strict=self.config.strict_checkpoint_loading,)
+        incompatible = model.load_state_dict(state_dict,
+                                             strict=self.config.strict_checkpoint_loading, )
 
         if self.config.verbose:
-            self._print_loading_report(checkpoint_path,incompatible,)
+            self._print_loading_report(checkpoint_path, incompatible, )
 
         model.to(self.device)
 
@@ -358,18 +397,19 @@ class SleepFMCheckpoint:
 
     # Saving
 
-    def save_checkpoint(self,model: nn.Module,output_path: Path,metadata: Optional[Dict] = None,):
+    def save_checkpoint(self, model: nn.Module, output_path: Path,
+                        metadata: Optional[Dict] = None, ):
 
         output = {
             "state_dict": model.state_dict(),
             "metadata": metadata,
         }
 
-        torch.save(output,output_path,)
+        torch.save(output, output_path, )
 
     # Extract state_dict
 
-    def _extract_state_dict(self,checkpoint: Dict,) -> Dict:
+    def _extract_state_dict(self, checkpoint: Dict, ) -> Dict:
 
         if "state_dict" in checkpoint:
             return checkpoint["state_dict"]
@@ -381,21 +421,21 @@ class SleepFMCheckpoint:
 
     # Freeze
 
-    def freeze_model(self,model: nn.Module,):
+    def freeze_model(self, model: nn.Module, ):
 
         for parameter in model.parameters():
             parameter.requires_grad = False
 
     # Unfreeze everything
 
-    def unfreeze_model(self,model: nn.Module,):
+    def unfreeze_model(self, model: nn.Module, ):
 
         for parameter in model.parameters():
             parameter.requires_grad = True
 
     # Unfreeze last transformer layers
 
-    def unfreeze_last_layers(self,transformer: nn.Module,n_layers: int,):
+    def unfreeze_last_layers(self, transformer: nn.Module, n_layers: int, ):
 
         if n_layers <= 0:
             return
@@ -408,7 +448,7 @@ class SleepFMCheckpoint:
 
     # Freeze tokenizer only
 
-    def freeze_tokenizer(self,model: nn.Module,):
+    def freeze_tokenizer(self, model: nn.Module, ):
 
         if not hasattr(model, "patch_embedding"):
             return
@@ -418,7 +458,7 @@ class SleepFMCheckpoint:
 
     # Unfreeze tokenizer
 
-    def unfreeze_tokenizer(self,model: nn.Module,):
+    def unfreeze_tokenizer(self, model: nn.Module, ):
 
         if not hasattr(model, "patch_embedding"):
             return
@@ -428,7 +468,7 @@ class SleepFMCheckpoint:
 
     # Parameter summary
 
-    def trainable_parameter_count(self,model: nn.Module,) -> int:
+    def trainable_parameter_count(self, model: nn.Module, ) -> int:
 
         return sum(
             p.numel()
@@ -438,7 +478,7 @@ class SleepFMCheckpoint:
 
     # Report
 
-    def _print_loading_report(self,checkpoint_path: Path,incompatible,):
+    def _print_loading_report(self, checkpoint_path: Path, incompatible, ):
 
         print()
         print("=" * 60)
@@ -454,7 +494,8 @@ class SleepFMCheckpoint:
             len(incompatible.unexpected_keys),
         )
         print("=" * 60)
-        
+
+
 class SleepFMEncoder(nn.Module):
     """
     Wrapper around the pretrained SleepFM SetTransformer.
@@ -470,21 +511,20 @@ class SleepFMEncoder(nn.Module):
     That is delegated to SleepFMPreprocessor.
     """
 
-    def __init__(self,config: SleepFMConfig,checkpoint_handler: Optional[SleepFMCheckpoint] = None,) -> None:
+    def __init__(self, config: SleepFMConfig, checkpoint_handler: Optional[
+        SleepFMCheckpoint] = None, ) -> None:
 
         super().__init__()
 
         self.config = config
         self.checkpoint_handler = checkpoint_handler
 
-        
         # Build original SleepFM backbone.
-        
+
         self.backbone = self._build_backbone()
 
-        
         # Load checkpoint if requested.
-        
+
         if (checkpoint_handler is not None and config.load_pretrained):
             checkpoint_handler.load_backbone(self.backbone)
 
@@ -492,8 +532,10 @@ class SleepFMEncoder(nn.Module):
         if config.freeze_backbone:
             self.freeze_backbone()
 
+        self.debug = getattr(config, "debug", True)
+
     # Backbone construction
-    
+
     def _build_backbone(self) -> SetTransformer:
         """
         Construct the original SleepFM SetTransformer.
@@ -515,8 +557,9 @@ class SleepFMEncoder(nn.Module):
         return backbone
 
     # Checkpoint handling
- 
-    def load_checkpoint(self,checkpoint: str | Path,strict: bool = False) -> None:
+
+    def load_checkpoint(self, checkpoint: str | Path,
+                        strict: bool = False) -> None:
         """
         Load a pretrained checkpoint into the backbone.
         """
@@ -642,152 +685,166 @@ class SleepFMEncoder(nn.Module):
             f"heads={self.config.num_heads}, "
             f"frozen={self.config.freeze_backbone}"
         )
-        
-# Internal forward helper
 
-    def _forward_single(
-    self,
-    signal: torch.Tensor,
-    mask: Optional[torch.Tensor] = None,
-):
-    """
-    Forward one modality through the original SleepFM SetTransformer.
+    # Internal forward helper
 
-    Parameters
-    ----------
-    signal:
-        Either
+    def _forward_single(self, signal: torch.Tensor,
+                        mask: Optional[torch.Tensor] = None, ):
 
-            (C, S, T_window)
+        """
+        Forward one modality through the original SleepFM SetTransformer.
 
-        or
+        Parameters
+        ----------
+        signal:
+            Either
 
-            (B, C, S, T_window)
+                (C, S, T_window)
 
-        where T_window should equal config.patch_size.
+            or
 
-    mask:
-        Channel padding mask.
+                (B, C, S, T_window)
 
-        Either
+            where T_window should equal config.patch_size.
 
-            (C,)
+        mask:
+            Channel padding mask.
 
-        or
+            Either
 
-            (B, C)
+                (C,)
 
-        where True means that the channel is padding and should
-        be ignored by SleepFM.
+            or
 
-    Returns
-    -------
-    pooled_embedding:
-        Tensor of shape (B, embedding_dimension).
+                (B, C)
 
-    sequence_embedding:
-        Tensor of shape (B, sequence_length, embedding_dimension).
-    """
+            where True means that the channel is padding and should
+            be ignored by SleepFM.
 
-    signal = signal.to(
-        device=self.device,
-        dtype=self.config.embedding_dtype,
-    )
+        Returns
+        -------
+        pooled_embedding:
+            Tensor of shape (B, embedding_dimension).
 
-    # ---------------------------------------------------------
-    # Note to myself: 
-    #
-    # Preprocessor:
-    #     (C, S, T_window)
-    #
-    # SleepFM expects:
-    #     (B, C, T)
-    #
-    # The ORIGINAL SleepFM Tokenizer will subsequently divide
-    # T into patch_size-sized patches.
-    # ---------------------------------------------------------
+        sequence_embedding:
+            Tensor of shape (B, sequence_length, embedding_dimension).
+        """
 
-    if signal.ndim == 3:
-        # (C, S, T_window)
-        C, S, T_window = signal.shape
+        signal = signal.to(device=self.device,
+                           dtype=self.config.embedding_dtype, )
 
-        if T_window != self.config.patch_size:
-            raise ValueError(
-                f"Expected window length {self.config.patch_size} samples, "
-                f"but received {T_window}."
+        self._debug(f"_forward_single(): input shape={tuple(signal.shape)}")
+        self._debug(
+            f"_forward_single(): "
+            f"channel count={signal.shape[1]}"
+        )
+        # ---------------------------------------------------------
+        # Note to myself: 
+        #
+        # Preprocessor:
+        #     (C, S, T_window)
+        #
+        # SleepFM expects:
+        #     (B, C, T)
+        #
+        # The ORIGINAL SleepFM Tokenizer will subsequently divide
+        # T into patch_size-sized patches.
+        # ---------------------------------------------------------
+
+        if signal.ndim == 3:
+            # (C, S, T_window)
+            C, S, T_window = signal.shape
+
+            if T_window != self.config.patch_size:
+                raise ValueError(
+                    f"Expected window length {self.config.patch_size} samples, "
+                    f"but received {T_window}."
+                )
+
+            self._debug(
+                f"_forward_single(): "
+                f"C={C}, S={S}, T_window={T_window}"
             )
 
-        signal = signal.reshape(
-            1,
-            C,
-            S * T_window,
+            signal = signal.reshape(
+                1,
+                C,
+                S * T_window,
+            )
+
+
+
+        elif signal.ndim == 4:
+            # (B, C, S, T_window)
+            B, C, S, T_window = signal.shape
+
+            if T_window != self.config.patch_size:
+                raise ValueError(
+                    f"Expected window length {self.config.patch_size} samples, "
+                    f"but received {T_window}."
+                )
+
+            signal = signal.reshape(
+                B,
+                C,
+                S * T_window,
+            )
+
+        elif signal.ndim == 2:
+            # (C, T)
+            C, T = signal.shape
+
+            signal = signal.unsqueeze(0)
+
+        else:
+            raise ValueError(
+                "SleepFM input must have shape "
+                "(C,T), (C,S,T_window), or (B,C,S,T_window). "
+                f"Received shape {tuple(signal.shape)}."
+            )
+
+        # Prepare channel mask
+
+        if mask is None:
+            mask = torch.zeros(signal.shape[0], signal.shape[1],
+                               dtype=torch.bool, device=self.device, )
+
+        else:
+            mask = mask.to(device=self.device, dtype=torch.bool, )
+
+            if mask.ndim == 1:
+                # (C,) -> (1,C)
+                mask = mask.unsqueeze(0)
+
+            elif mask.ndim != 2:
+                raise ValueError(
+                    "SleepFM channel mask must have shape "
+                    "(C,) or (B,C). "
+                    f"Received shape {tuple(mask.shape)}."
+                )
+
+            if mask.shape[0] == 1 and signal.shape[0] > 1:
+                mask = mask.expand(signal.shape[0], -1)
+
+            if mask.shape != signal.shape[:2]:
+                raise ValueError(
+                    "SleepFM mask shape does not match signal shape. "
+                    f"Signal: {tuple(signal.shape)}, "
+                    f"mask: {tuple(mask.shape)}."
+                )
+
+        pooled_embedding, sequence_embedding = self.backbone(
+            signal,
+            mask,
         )
 
-    elif signal.ndim == 4:
-        # (B, C, S, T_window)
-        B, C, S, T_window = signal.shape
+        return pooled_embedding, sequence_embedding
 
-        if T_window != self.config.patch_size:
-            raise ValueError(
-                f"Expected window length {self.config.patch_size} samples, "
-                f"but received {T_window}."
-            )
-
-        signal = signal.reshape(B,C,S * T_window,)
-
-    elif signal.ndim == 2:
-        # (C, T)
-        C, T = signal.shape
-
-        signal = signal.unsqueeze(0)
-
-    else:
-        raise ValueError(
-            "SleepFM input must have shape "
-            "(C,T), (C,S,T_window), or (B,C,S,T_window). "
-            f"Received shape {tuple(signal.shape)}."
-        )
-
-    # Prepare channel mask
-
-    if mask is None:
-        mask = torch.zeros(signal.shape[0],signal.shape[1],dtype=torch.bool,device=self.device,)
-
-    else:
-        mask = mask.to(device=self.device,dtype=torch.bool,)
-
-        if mask.ndim == 1:
-            # (C,) -> (1,C)
-            mask = mask.unsqueeze(0)
-
-        elif mask.ndim != 2:
-            raise ValueError(
-                "SleepFM channel mask must have shape "
-                "(C,) or (B,C). "
-                f"Received shape {tuple(mask.shape)}."
-            )
-
-        if mask.shape[0] == 1 and signal.shape[0] > 1:
-            mask = mask.expand(signal.shape[0], -1)
-
-        if mask.shape != signal.shape[:2]:
-            raise ValueError(
-                "SleepFM mask shape does not match signal shape. "
-                f"Signal: {tuple(signal.shape)}, "
-                f"mask: {tuple(mask.shape)}."
-            )
-
-
-    pooled_embedding, sequence_embedding = self.backbone(
-        signal,
-        mask,
-    )
-
-    return pooled_embedding, sequence_embedding
-        
     def forward(self,
-                modality_tensors: Union[Dict[str, torch.Tensor],List[torch.Tensor]],
-                modality_masks: Optional[Union[Dict[str, torch.Tensor], List[torch.Tensor]]] = None, 
+                modality_tensors: Union[
+                    Dict[str, torch.Tensor], List[torch.Tensor]],
+                modality_masks: Optional[
+                    Union[Dict[str, torch.Tensor], List[torch.Tensor]]] = None,
                 ):
         """
         Forward every available modality.
@@ -804,16 +861,93 @@ class SleepFMEncoder(nn.Module):
                 }
             }
         """
+        self._debug("=" * 80)
+        self._debug("SleepFMEncoder.forward()")
+        self._debug(f"modality_tensors type: {type(modality_tensors)}")
+        self._debug(f"modality_masks type: {type(modality_masks)}")
+
+        if isinstance(modality_tensors, dict):
+            self._debug(
+                f"modality_tensors keys: {list(modality_tensors.keys())}"
+            )
+
+            for modality, tensor in modality_tensors.items():
+                self._debug(
+                    f"  {modality}: "
+                    f"type={type(tensor)}, "
+                    f"shape={tuple(tensor.shape)}, "
+                    f"dtype={tensor.dtype}, "
+                    f"device={tensor.device}"
+                )
+
+        elif isinstance(modality_tensors, list):
+            self._debug(
+                f"modality_tensors length: {len(modality_tensors)}"
+            )
+
+            for i, tensor in enumerate(modality_tensors):
+                self._debug(
+                    f"  [{i}]: "
+                    f"type={type(tensor)}, "
+                    f"shape={tuple(tensor.shape)}, "
+                    f"dtype={tensor.dtype}, "
+                    f"device={tensor.device}"
+                )
+
+        else:
+            raise TypeError(
+                "modality_tensors must be a dict or list, "
+                f"got {type(modality_tensors)}"
+            )
+
+        if modality_masks is None:
+            self._debug("modality_masks: None")
+
+        elif isinstance(modality_masks, dict):
+            self._debug(
+                f"modality_masks keys: {list(modality_masks.keys())}"
+            )
+
+            for modality, mask in modality_masks.items():
+                self._debug(
+                    f"  {modality}: "
+                    f"type={type(mask)}, "
+                    f"shape={tuple(mask.shape)}, "
+                    f"dtype={mask.dtype}, "
+                    f"device={mask.device}"
+                )
+
+        elif isinstance(modality_masks, list):
+            self._debug(
+                f"modality_masks length: {len(modality_masks)}"
+            )
+
+            for i, mask in enumerate(modality_masks):
+                self._debug(
+                    f"  [{i}]: "
+                    f"type={type(mask)}, "
+                    f"shape={tuple(mask.shape)}, "
+                    f"dtype={mask.dtype}, "
+                    f"device={mask.device}"
+                )
+
+        else:
+            raise TypeError(
+                "modality_masks must be a dict, list, or None, "
+                f"got {type(modality_masks)}"
+            )
 
         outputs = {}
         if isinstance(modality_tensors, list):
             items = enumerate(modality_tensors)
-            get_mask = lambda idx: modality_masks[idx] if modality_masks is not None else None
+            get_mask = lambda idx: modality_masks[
+                idx] if modality_masks is not None else None
         else:
             items = modality_tensors.items()
-            get_mask = lambda key: modality_masks[key] if modality_masks is not None and key in modality_masks else None
+            get_mask = lambda key: modality_masks[
+                key] if modality_masks is not None and key in modality_masks else None
         for key, tensor in items:
-            mask = get_mask(key) 
+            mask = get_mask(key)
             pooled, sequence = self._forward_single(tensor, mask)
             outputs[key] = {
                 "embedding": pooled,
@@ -821,9 +955,9 @@ class SleepFMEncoder(nn.Module):
             }
 
         return outputs
-        
+
     @torch.no_grad()
-    def encode(self,modality_tensors,modality_masks,):
+    def encode(self, modality_tensors, modality_masks, ):
         """
         Return pooled embeddings.
 
@@ -841,10 +975,10 @@ class SleepFMEncoder(nn.Module):
         return {
             modality: out["embedding"]
             for modality, out in outputs.items()
-        }   
-    
+        }
+
     @torch.no_grad()
-    def extract_tokens(self,signal: torch.Tensor,):
+    def extract_tokens(self, signal: torch.Tensor, ):
         """
         Return CNN token embeddings before
         any transformer layers.
@@ -862,23 +996,23 @@ class SleepFMEncoder(nn.Module):
         signal = signal.to(self.device)
 
         return self.backbone.patch_embedding(signal)
-        
+
     @torch.no_grad()
-    def encode_mean(self,modality_tensors,modality_masks,):
+    def encode_mean(self, modality_tensors, modality_masks, ):
         """
         Return one embedding for the entire recording.
 
         Multiple modality embeddings are averaged.
         """
 
-        embeddings = self.encode(modality_tensors,modality_masks,)
+        embeddings = self.encode(modality_tensors, modality_masks, )
 
-        stacked = torch.stack(list(embeddings.values()),dim=0,)
+        stacked = torch.stack(list(embeddings.values()), dim=0, )
 
         return stacked.mean(dim=0)
-        
+
     @torch.no_grad()
-    def encode_concat(self,modality_tensors,modality_masks,):
+    def encode_concat(self, modality_tensors, modality_masks, ):
         """
         Concatenate all modality embeddings.
 
@@ -905,9 +1039,10 @@ class SleepFMEncoder(nn.Module):
         for modality in sorted(embeddings.keys()):
             ordered.append(embeddings[modality])
 
-        return torch.cat(ordered,dim=-1,)
-        
-    def embedding_size(self,num_modalities: int = 1,aggregation: str = "mean",):
+        return torch.cat(ordered, dim=-1, )
+
+    def embedding_size(self, num_modalities: int = 1,
+                       aggregation: str = "mean", ):
         """
         Return output dimensionality.
         """
@@ -916,35 +1051,42 @@ class SleepFMEncoder(nn.Module):
             return self.embedding_dimension
 
         if aggregation == "concat":
-            return (num_modalities* self.embedding_dimension)
+            return (num_modalities * self.embedding_dimension)
 
         raise ValueError(f"Unknown aggregation '{aggregation}'.")
-    
-    
-def load_sleepfm(config: SleepFMConfig, checkpoint_path: Optional[Union[str, Path]] = None) -> SleepFMEncoder:
+
+    def _debug(self, message):
+        if self.debug:
+            print(f"[SleepFMEncoder DEBUG] {message}")
+            #logger.info(f"[SleepFMEncoder DEBUG] {message}")
+
+
+def load_sleepfm(config: SleepFMConfig, checkpoint_path: Optional[
+    Union[str, Path]] = None) -> SleepFMEncoder:
     """
     Instantiates the SleepFMEncoder model, loads pre-trained weights via 
     SleepFMCheckpoint, and sets the model to evaluation mode.
     """
     model = SleepFMEncoder(config)
-    
+
     path = Path(checkpoint_path) if checkpoint_path else config.checkpoint_path
     if path and path.exists():
         ckpt_handler = SleepFMCheckpoint(config)
         model = ckpt_handler.load_backbone(model, checkpoint_path=path)
-        
+
     model.to(config.device)
     model.eval()
     return model
 
 
-def save_embeddings(embeddings: torch.Tensor, output_path: Union[str, Path], metadata: Optional[Dict] = None) -> None:
+def save_embeddings(embeddings: torch.Tensor, output_path: Union[str, Path],
+                    metadata: Optional[Dict] = None) -> None:
     """
     Saves generated patient/sequence embeddings and associated metadata to disk.
     """
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     payload = {
         "embeddings": embeddings.detach().cpu(),
         "metadata": metadata or {}
@@ -952,14 +1094,15 @@ def save_embeddings(embeddings: torch.Tensor, output_path: Union[str, Path], met
     torch.save(payload, path)
 
 
-def load_embeddings(embedding_path: Union[str, Path], device: str = "cpu") -> Tuple[torch.Tensor, Dict]:
+def load_embeddings(embedding_path: Union[str, Path], device: str = "cpu") -> \
+Tuple[torch.Tensor, Dict]:
     """
     Loads cached embeddings and metadata from a given file path.
     """
     path = Path(embedding_path)
     if not path.exists():
         raise FileNotFoundError(f"Embedding file not found at: {path}")
-        
+
     data = torch.load(path, map_location=device)
     return data["embeddings"], data.get("metadata", {})
 
@@ -987,42 +1130,49 @@ def unfreeze_last_layers(model: nn.Module, n_layers: int) -> None:
         layers = list(model.encoder.layers)
     else:
         # Fallback: find all children modules named 'layer' or 'layers'
-        layers = [m for name, m in model.named_modules() if "layer" in name.lower()]
+        layers = [m for name, m in model.named_modules() if
+                  "layer" in name.lower()]
 
     for layer in layers[-n_layers:]:
         for param in layer.parameters():
             param.requires_grad = True
-    
+
+
 class FeatureExtractorStrategy:
     """
     Strategy 1: Frozen feature extraction strategy using SleepFM as a static embedding generator.
     """
+
     def __init__(self, config: SleepFMConfig):
         self.config = config
         self.preprocessor = SleepFMPreprocessor(config)
         self.model = load_sleepfm(config)
         freeze_backbone(self.model)
 
-    def extract_features(self, modality_signals: Dict[str, Dict[str, np.ndarray]]) -> np.ndarray:
+    def extract_features(self, modality_signals: Dict[
+        str, Dict[str, np.ndarray]]) -> np.ndarray:
         tensors, masks = self.preprocessor.preprocess(modality_signals)
         with torch.no_grad():
-            combined_tensor = self.model.encode_concat(tensors, masks)  
+            combined_tensor = self.model.encode_concat(tensors, masks)
         return combined_tensor.squeeze(0).cpu().numpy()
+
 
 class FineTuneStrategy(nn.Module):
     """
     Strategy 2: End-to-end fine-tuning strategy with an optional prediction head.
     """
+
     def __init__(self, config: SleepFMConfig, num_classes: int = 2):
         super().__init__()
         self.config = config
         self.backbone = SleepFMEncoder(config)
-        
+
         if config.freeze_backbone:
             freeze_backbone(self.backbone)
             if config.unfreeze_last_n_layers:
-                unfreeze_last_layers(self.backbone, config.unfreeze_last_n_layers)
-                
+                unfreeze_last_layers(self.backbone,
+                                     config.unfreeze_last_n_layers)
+
         self.classifier = nn.Sequential(
             nn.Linear(config.embedding_dimension, 64),
             nn.ReLU(),
@@ -1030,25 +1180,30 @@ class FineTuneStrategy(nn.Module):
             nn.Linear(64, num_classes)
         )
 
-    def forward(self, 
-                modality_tensors: Union[Dict[str, torch.Tensor], List[torch.Tensor]],
-                modality_masks: Optional[Union[Dict[str, torch.Tensor], List[torch.Tensor]]] = None
+    def forward(self,
+                modality_tensors: Union[
+                    Dict[str, torch.Tensor], List[torch.Tensor]],
+                modality_masks: Optional[
+                    Union[Dict[str, torch.Tensor], List[torch.Tensor]]] = None
                 ) -> torch.Tensor:
         outputs = self.backbone(modality_tensors, modality_masks)
-        embeddings = [out["embedding"] for out in outputs.values()] 
+        embeddings = [out["embedding"] for out in outputs.values()]
         stacked = torch.stack(embeddings, dim=0).mean(dim=0)
         logits = self.classifier(stacked)
         return logits
+
 
 class HybridStrategy(nn.Module):
     """
     Strategy 3: Fuses handcrafted domain features with SleepFM continuous embeddings.
     """
-    def __init__(self, config: SleepFMConfig, handcrafted_dim: int, num_classes: int = 2):
+
+    def __init__(self, config: SleepFMConfig, handcrafted_dim: int,
+                 num_classes: int = 2):
         super().__init__()
         self.config = config
         self.backbone = load_sleepfm(config)
-        
+
         if config.freeze_backbone:
             freeze_backbone(self.backbone)
 
@@ -1067,15 +1222,14 @@ class HybridStrategy(nn.Module):
         )
 
     def forward(
-        self, 
-        modality_tensors: List[torch.Tensor], 
-        handcrafted_features: torch.Tensor, 
-        modality_masks: Optional[List[torch.Tensor]] = None
+            self,
+            modality_tensors: List[torch.Tensor],
+            handcrafted_features: torch.Tensor,
+            modality_masks: Optional[List[torch.Tensor]] = None
     ) -> torch.Tensor:
         deep_embeddings = self.backbone(modality_tensors, modality_masks)
         hc_embeddings = self.handcrafted_projection(handcrafted_features)
-        
+
         fused_vector = torch.cat([deep_embeddings, hc_embeddings], dim=-1)
         logits = self.fusion_classifier(fused_vector)
         return logits
-    
