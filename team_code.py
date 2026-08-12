@@ -216,9 +216,11 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                     modality_signals[category] = {}
                 # Store signal under its category using the raw channel name as key
                 modality_signals[category][raw_channel_name] = channel_signal    
-        # Extract embeddings
-        sleepfm_emb = extractor.extract_features(modality_signals)
-        sleep_fm_embeddings_array.append(sleepfm_emb)
+        #--------------------------------------------------------------
+        # Extract embeddings, currently non-used, until problems with our code is identified
+        #sleepfm_emb = extractor.extract_features(modality_signals)
+        #sleep_fm_embeddings_array.append(sleepfm_emb)
+        # --------------------------------------------------------------
         # if 'physiological_data' in locals(): del physiological_data
         # if 'algorithmic_annotations' in locals(): del algorithmic_annotations
 
@@ -347,14 +349,14 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     
     selected_features = best_features
 
-    X_tabular=full_df[selected_features].to_numpy()
-    X_combined=np.hstack([X_tabular,sleepfm_embeddings_array])
+    #X_tabular=full_df[selected_features].to_numpy()
+    #X_combined=np.hstack([X_tabular,sleepfm_embeddings_array])
 
     X = full_df[selected_features]
     y = full_df["Cognitive_Impairment"]
     
-    # features = np.asarray(features, dtype=np.float32)
-    # labels = np.asarray(labels, dtype=bool)
+    features = np.asarray(features, dtype=np.float32)
+    labels = np.asarray(labels, dtype=bool)
     
     # Train the models on the features.
     if verbose:
@@ -369,8 +371,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     print(y_np.shape)
     
     team_debug.update_success("training started", message="Starting model fitting")
-    #model = XGBClassifier(**params,objective="binary:logistic",eval_metric="auc",tree_method="hist",enable_categorical=True,random_state=42).fit(X_np, y_np)
-    model = XGBClassifier(**params,objective="binary:logistic",eval_metric="auc",tree_method="hist",enable_categorical=True,random_state=42).fit(X_combined, y_np)
+    model = XGBClassifier(**params,objective="binary:logistic",eval_metric="auc",tree_method="hist",enable_categorical=True,random_state=42).fit(X_np, y_np)
+    #model = XGBClassifier(**params,objective="binary:logistic",eval_metric="auc",tree_method="hist",enable_categorical=True,random_state=42).fit(X_combined, y_np)
     
     # Create a folder for the model if it does not already exist.
     os.makedirs(model_folder, exist_ok=True)
