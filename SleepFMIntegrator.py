@@ -646,54 +646,144 @@ class SleepFMEncoder(nn.Module):
 # Internal forward helper
 
     def _forward_single(
-        self,
-        signal: torch.Tensor,
-        mask: Optional[torch.Tensor]=None,
-    ):
-        """
-        Forward one modality through the original SleepFM backbone.
+    self,
+    signal: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
+):
+    """
+    Forward one modality through the original SleepFM SetTransformer.
 
-        Parameters
-        ----------
-        signal
-            Shape:
-                (B, C, T)
+    Parameters
+    ----------
+    signal:
+        Either
 
-        mask
-            Shape:
-                (B, C)
+            (C, S, T_window)
 
-        Returns
-        -------
-        pooled_embedding
-            (B, embedding_dim)
+        or
 
-        sequence_embedding
-            (B, sequence_length, embedding_dim)
-        """
+            (B, C, S, T_window)
 
-        signal = signal.to(self.device)
+        where T_window should equal config.patch_size.
 
-        # Add batch dimension if missing: (C, S, T) -> (1, C, S, T)
-        if signal.ndim == 3:
-            # Shape is (C, S, T_win) -> reshape to (1, C, S * T_win)
-            C, S, T_win = signal.shape
-            signal = signal.view(1, C, S * T_win)
-        elif signal.ndim == 4:
-            # Shape is (B, C, S, T_win) -> reshape to (B, C, S * T_win)
-            B, C, S, T_win = signal.shape
-            signal = signal.view(B, C, S * T_win)
+    mask:
+        Channel padding mask.
 
-        if mask is not None:
-            mask = mask.to(self.device)
-            # Add batch dimension if missing: (C,) -> (1, C)
-            if mask.ndim == 1:
-                mask = mask.unsqueeze(0)
-            elif mask.ndim == 2 and mask.shape[1] == 1:
-                mask = mask.transpose(0, 1)  # Ensure shape is (1, C) rather than (C, 1)
+        Either
 
-        pooled_embedding, sequence_embedding = self.backbone(signal, mask)
-        return pooled_embedding, sequence_embedding
+            (C,)
+
+        or
+
+            (B, C)
+
+        where True means that the channel is padding and should
+        be ignored by SleepFM.
+
+    Returns
+    -------
+    pooled_embedding:
+        Tensor of shape (B, embedding_dimension).
+
+    sequence_embedding:
+        Tensor of shape (B, sequence_length, embedding_dimension).
+    """
+
+    signal = signal.to(
+        device=self.device,
+        dtype=self.config.embedding_dtype,
+    )
+
+    # ---------------------------------------------------------
+    # Note to myself: 
+    #
+    # Preprocessor:
+    #     (C, S, T_window)
+    #
+    # SleepFM expects:
+    #     (B, C, T)
+    #
+    # The ORIGINAL SleepFM Tokenizer will subsequently divide
+    # T into patch_size-sized patches.
+    # ---------------------------------------------------------
+
+    if signal.ndim == 3:
+        # (C, S, T_window)
+        C, S, T_window = signal.shape
+
+        if T_window != self.config.patch_size:
+            raise ValueError(
+                f"Expected window length {self.config.patch_size} samples, "
+                f"but received {T_window}."
+            )
+
+        signal = signal.reshape(
+            1,
+            C,
+            S * T_window,
+        )
+
+    elif signal.ndim == 4:
+        # (B, C, S, T_window)
+        B, C, S, T_window = signal.shape
+
+        if T_window != self.config.patch_size:
+            raise ValueError(
+                f"Expected window length {self.config.patch_size} samples, "
+                f"but received {T_window}."
+            )
+
+        signal = signal.reshape(B,C,S * T_window,)
+
+    elif signal.ndim == 2:
+        # (C, T)
+        C, T = signal.shape
+
+        signal = signal.unsqueeze(0)
+
+    else:
+        raise ValueError(
+            "SleepFM input must have shape "
+            "(C,T), (C,S,T_window), or (B,C,S,T_window). "
+            f"Received shape {tuple(signal.shape)}."
+        )
+
+    # Prepare channel mask
+
+    if mask is None:
+        mask = torch.zeros(signal.shape[0],signal.shape[1],dtype=torch.bool,device=self.device,)
+
+    else:
+        mask = mask.to(device=self.device,dtype=torch.bool,)
+
+        if mask.ndim == 1:
+            # (C,) -> (1,C)
+            mask = mask.unsqueeze(0)
+
+        elif mask.ndim != 2:
+            raise ValueError(
+                "SleepFM channel mask must have shape "
+                "(C,) or (B,C). "
+                f"Received shape {tuple(mask.shape)}."
+            )
+
+        if mask.shape[0] == 1 and signal.shape[0] > 1:
+            mask = mask.expand(signal.shape[0], -1)
+
+        if mask.shape != signal.shape[:2]:
+            raise ValueError(
+                "SleepFM mask shape does not match signal shape. "
+                f"Signal: {tuple(signal.shape)}, "
+                f"mask: {tuple(mask.shape)}."
+            )
+
+
+    pooled_embedding, sequence_embedding = self.backbone(
+        signal,
+        mask,
+    )
+
+    return pooled_embedding, sequence_embedding
         
     def forward(self,
                 modality_tensors: Union[Dict[str, torch.Tensor],List[torch.Tensor]],
