@@ -1195,41 +1195,144 @@ class FineTuneStrategy(nn.Module):
 
 class HybridStrategy(nn.Module):
     """
-    Strategy 3: Fuses handcrafted domain features with SleepFM continuous embeddings.
+    Strategy 3: Hybrid handcrafted + SleepFM model.
+
+    SleepFM processes each modality independently and returns one
+    pooled embedding per modality. These modality embeddings are
+    fused into a single patient-level SleepFM representation.
+
+    The patient-level SleepFM representation is then concatenated
+    with a learned projection of the handcrafted features.
+
+    Flow
+    ----
+        modality tensors
+            I
+            V
+        SleepFMEncoder
+            I
+            V
+        one embedding per modality
+            I
+            V
+        modality fusion
+            I
+        SleepFM patient embedding
+                                I
+                                V
+                         I── handcrafted features
+                         I    I  
+                         I    V
+                         I   projection
+                         I
+        SleepFM embedding ──────I
+                         I
+                         V
+                    concatenation
+                         I
+                         V
+                  fusion classifier
+                         I
+                         V
+                       logits
     """
 
-    def __init__(self, config: SleepFMConfig, handcrafted_dim: int,
-                 num_classes: int = 2):
+    def __init__(
+        self,
+        config: SleepFMConfig,
+        handcrafted_dim: int,
+        num_classes: int = 2,
+    ):
         super().__init__()
+
         self.config = config
-        self.backbone = load_sleepfm(config)
+
+        # SleepFM backbone
+        
+        self.backbone = SleepFMEncoder(config)
 
         if config.freeze_backbone:
             freeze_backbone(self.backbone)
 
+        # Handcrafted feature branch
+  
         self.handcrafted_projection = nn.Sequential(
-            nn.Linear(handcrafted_dim, config.handcrafted_projection_dimension),
-            nn.BatchNorm1d(config.handcrafted_projection_dimension),
-            nn.ReLU()
+            nn.Linear(
+                handcrafted_dim,
+                config.handcrafted_projection_dimension,
+            ),
+            nn.BatchNorm1d(
+                config.handcrafted_projection_dimension
+            ),
+            nn.ReLU(),
         )
 
-        combined_dim = config.embedding_dimension + config.handcrafted_projection_dimension
+        # Fusion classifier
+ 
+        combined_dim = (
+            config.embedding_dimension
+            + config.handcrafted_projection_dimension
+        )
+
         self.fusion_classifier = nn.Sequential(
             nn.Linear(combined_dim, 128),
             nn.ReLU(),
             nn.Dropout(config.dropout),
-            nn.Linear(128, num_classes)
+            nn.Linear(128, num_classes),
         )
 
     def forward(
-            self,
-            modality_tensors: List[torch.Tensor],
-            handcrafted_features: torch.Tensor,
-            modality_masks: Optional[List[torch.Tensor]] = None
+        self,
+        modality_tensors: Union[
+            Dict[str, torch.Tensor],
+            List[torch.Tensor],
+        ],
+        handcrafted_features: torch.Tensor,
+        modality_masks: Optional[
+            Union[
+                Dict[str, torch.Tensor],
+                List[torch.Tensor],
+            ]
+        ] = None,
     ) -> torch.Tensor:
-        deep_embeddings = self.backbone(modality_tensors, modality_masks)
-        hc_embeddings = self.handcrafted_projection(handcrafted_features)
 
-        fused_vector = torch.cat([deep_embeddings, hc_embeddings], dim=-1)
-        logits = self.fusion_classifier(fused_vector)
+        # 1. SleepFM
+        sleepfm_outputs = self.backbone(
+            modality_tensors,
+            modality_masks,
+        )
+
+        # 2. Extract pooled embedding from each modality
+        modality_embeddings = []
+
+        for key, output in sleepfm_outputs.items():
+            embedding = output["embedding"]
+            modality_embeddings.append(embedding)
+
+        if len(modality_embeddings) == 0:
+            raise RuntimeError(
+                "SleepFMEncoder returned no modality embeddings."
+            )
+        # 3. Fuse modalities
+
+        # Each embedding has shape:
+        #     (B, embedding_dimension)
+        # Stack:
+        #     (num_modalities, B, embedding_dimension)
+        # Mean:
+        #     (B, embedding_dimension)
+
+        stacked_embeddings = torch.stack(modality_embeddings,dim=0,)
+        deep_embedding = stacked_embeddings.mean(dim=0)
+
+        # 4. Handcrafted branch
+        handcrafted_embedding = self.handcrafted_projection(handcrafted_features)
+
+        # 5. Hybrid fusion
+        fused_vector = torch.cat([deep_embedding,handcrafted_embedding,],dim=-1,)
+
+        # 6. Prediction
+        logits = self.fusion_classifier(
+            fused_vector
+        )
         return logits
