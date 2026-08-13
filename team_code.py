@@ -205,6 +205,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             
             # features.append(np.hstack(    [demographic_features, physiological_vector,algorithmic_features]))
             labels.append(label)
+        '''
         modality_signals = {}
 
         for raw_channel_name, channel_signal in physiological_data.items():
@@ -216,6 +217,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                     modality_signals[category] = {}
                 # Store signal under its category using the raw channel name as key
                 modality_signals[category][raw_channel_name] = channel_signal    
+        '''
         #--------------------------------------------------------------
         # Extract embeddings, currently non-used, until problems with our code is identified
         #sleepfm_emb = extractor.extract_features(modality_signals)
@@ -350,7 +352,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     print(f"Unique feature lengths found: {set(lengths)}")
     
     selected_features = best_features'''
-    selected_features = [f for f in full_df.columns if "eeg" in f.lower()] # temporary replacement, until I find wtf is wrong with stratified_pca_selection
+    selected_features = [f for f in full_df.columns if "resp" in f.lower()] # temporary replacement, until I find wtf is wrong with stratified_pca_selection
 
     #X_tabular=full_df[selected_features].to_numpy()
     #X_combined=np.hstack([X_tabular,sleepfm_embeddings_array])
@@ -467,7 +469,7 @@ def run_model(model, record, data_folder, verbose):
     feat_df["W_prob"] = algorithmic_features[9]
     feat_df["N3_prob"] = algorithmic_features[10]
     feat_df["Ar_prob"] = algorithmic_features[11]
-    selected_features = [f for f in full_df.columns if "eeg" in f.lower()]
+    selected_features = [f for f in full_df.columns if "resp" in f.lower()]
     feat_df=feat_df[selected_features]
     features = feat_df[feature_list].to_numpy().flatten().astype(np.float32)
     
