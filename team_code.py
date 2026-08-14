@@ -202,38 +202,37 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 if len(features) == 0:
                     team_debug.update_failure("patient appended", patient_id=patient_id, iteration=i)
 
-            
-            # features.append(np.hstack(    [demographic_features, physiological_vector,algorithmic_features]))
-            labels.append(label)
-        '''
-        modality_signals = {}
+                # features.append(np.hstack(    [demographic_features, physiological_vector,algorithmic_features]))
+                labels.append(label)
+            '''
+            modality_signals = {}
+    
+            for raw_channel_name, channel_signal in physiological_data.items():
+                # Retrieve modality category (e.g., 'BAS', 'RESP', 'EKG', 'EMG')
+                category = category_lookup.get(raw_channel_name)
+                    
+                if category:
+                    if category not in modality_signals:
+                        modality_signals[category] = {}
+                    # Store signal under its category using the raw channel name as key
+                    modality_signals[category][raw_channel_name] = channel_signal    
+            '''
+            #--------------------------------------------------------------
+            # Extract embeddings, currently non-used, until problems with our code is identified
+            #sleepfm_emb = extractor.extract_features(modality_signals)
+            #sleep_fm_embeddings_array.append(sleepfm_emb)
+            # --------------------------------------------------------------
+            # if 'physiological_data' in locals(): del physiological_data
+            # if 'algorithmic_annotations' in locals(): del algorithmic_annotations
 
-        for raw_channel_name, channel_signal in physiological_data.items():
-            # Retrieve modality category (e.g., 'BAS', 'RESP', 'EKG', 'EMG')
-            category = category_lookup.get(raw_channel_name)
-                
-            if category:
-                if category not in modality_signals:
-                    modality_signals[category] = {}
-                # Store signal under its category using the raw channel name as key
-                modality_signals[category][raw_channel_name] = channel_signal    
-        '''
-        #--------------------------------------------------------------
-        # Extract embeddings, currently non-used, until problems with our code is identified
-        #sleepfm_emb = extractor.extract_features(modality_signals)
-        #sleep_fm_embeddings_array.append(sleepfm_emb)
-        # --------------------------------------------------------------
-        # if 'physiological_data' in locals(): del physiological_data
-        # if 'algorithmic_annotations' in locals(): del algorithmic_annotations
-
-    except Exception as e:
-    # If an error occurs (e.g., a record is corrupted), log it and move to the next
-        error_stack = traceback.format_exc()
-        team_debug.update_failure("start", patient_id=patient_id if 'patient_id' in locals() else "Unknown", iteration=i,
-                              message=str(e), exc=e)
-        tqdm.write(f"  !!! Error processing record {i + 1} ({patient_id}): {e}")
-        tqdm.write(error_stack)
-        continue
+        except Exception as e:
+        # If an error occurs (e.g., a record is corrupted), log it and move to the next
+            error_stack = traceback.format_exc()
+            team_debug.update_failure("start", patient_id=patient_id if 'patient_id' in locals() else "Unknown", iteration=i,
+                                  message=str(e), exc=e)
+            tqdm.write(f"  !!! Error processing record {i + 1} ({patient_id}): {e}")
+            tqdm.write(error_stack)
+            continue
 
     pbar.close()
 
@@ -317,7 +316,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
         team_debug.update_success("feature dataframe created",
                                   message="Reconstructed feature vector from backup files complete")
 
-    '''
+    
     y = full_df["Cognitive_Impairment"]
     
     ranked_features = stratified_pca_feature_selection(full_df, y, params)
@@ -351,8 +350,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     lengths = [len(f) for f in features]
     print(f"Unique feature lengths found: {set(lengths)}")
     
-    selected_features = best_features'''
-    selected_features = [f for f in full_df.columns if "resp" in f.lower()] # temporary replacement, until I find wtf is wrong with stratified_pca_selection
+    selected_features = best_features
+    #selected_features = [f for f in full_df.columns if "resp" in f.lower()] # temporary replacement, until I find wtf is wrong with stratified_pca_selection
 
     #X_tabular=full_df[selected_features].to_numpy()
     #X_combined=np.hstack([X_tabular,sleepfm_embeddings_array])
