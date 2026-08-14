@@ -15,4 +15,4 @@ WORKDIR /challenge
 ## Upgrade pip and install requirements
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install -r requirements.txt
-RUN git clone https://github.com/zou-group/sleepfm-clinical.git
+#RUN git clone https://github.com/zou-group/sleepfm-clinical.git
