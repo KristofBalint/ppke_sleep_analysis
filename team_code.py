@@ -318,7 +318,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
     
     y = full_df["Cognitive_Impairment"]
-    
+    '''
     ranked_features = stratified_pca_feature_selection(full_df, y, params)
     
     percentages = list(range(50, 4, -5))
@@ -351,7 +351,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     print(f"Unique feature lengths found: {set(lengths)}")
     
     selected_features = best_features
-    #selected_features = [f for f in full_df.columns if "resp" in f.lower()] # temporary replacement, until I find wtf is wrong with stratified_pca_selection
+    '''
+    selected_features = [f for f in full_df.columns if "resp" in f.lower()] # temporary replacement, until I find wtf is wrong with stratified_pca_selection
 
     #X_tabular=full_df[selected_features].to_numpy()
     #X_combined=np.hstack([X_tabular,sleepfm_embeddings_array])
