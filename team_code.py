@@ -352,7 +352,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     
     selected_features = best_features
     '''
-    selected_features = [f for f in full_df.columns if "resp" in f.lower()] # temporary replacement, until I find wtf is wrong with stratified_pca_selection
+    selected_features = [f for f in full_df.columns if "eeg" in f.lower()] # temporary replacement, until I find wtf is wrong with stratified_pca_selection
 
     #X_tabular=full_df[selected_features].to_numpy()
     #X_combined=np.hstack([X_tabular,sleepfm_embeddings_array])
@@ -469,7 +469,7 @@ def run_model(model, record, data_folder, verbose):
     feat_df["W_prob"] = algorithmic_features[9]
     feat_df["N3_prob"] = algorithmic_features[10]
     feat_df["Ar_prob"] = algorithmic_features[11]
-    selected_features = [f for f in full_df.columns if "resp" in f.lower()]
+    selected_features = [f for f in full_df.columns if "eeg" in f.lower()]
     feat_df=feat_df[selected_features]
     features = feat_df[feature_list].to_numpy().flatten().astype(np.float32)
     
