@@ -779,7 +779,7 @@ def process_channel(ch_name, raw_psg, category_lookup, subject_id, session_id, h
             if features:
                 features["stage"] = stage_name
                 features["category"] = category
-                features["transition_id"] = trainsition_counter
+                features["transition_id"] = transition_counter
                 features["transition_type"] = transition_type
                 trans_features = extract_local_transition_features(data=data, boundary_idx=end_idx, fs=fs,
                                                                    window_sec=60)
