@@ -101,33 +101,43 @@ class DebugMessageCollector:
 
     # Defined Checkpoints (Dimension 2)
     CHECKPOINTS = [
-        "start",
-        "patient loaded",
-        "demographics loaded",
-        "algorithmic annotations loaded",
-        "physiological loaded",
-        "feature extraction returned",
-        "human annotations loaded",
+        # train_model setup
+        "entered","patients found","sleepfm initialized",
+        
+        # per-patient input loading
+        "patient started","patient loaded","demographics loaded",
+        "algorithmic annotations loaded", "physiological loaded", "hypnogram processed",
         "diagnosis loaded",
-        "feature dataframe created",
-        "backup written",
+    
+        # handcrafted branch
+        "feature extraction returned","patient feature row created",
+    
+        # SleepFM branch
+        "sleepfm modalities built","sleepfm preprocessing started", "sleepfm embedding returned",
+    
+        # patient completion
         "patient appended",
-        "training started",
-        "entered",
-        "extract_physiological_features",
-        "channels standardized",
-        "hypnogram processed",
-        "quality assessment started",
-        "EEG processed",
-        "ECG processed",
-        "EMG processed",
-        "resp processed",
-        "EOG processed",
-        "parallel processing complete",
-        "pivot complete",
-        "transition features complete",
-        "reindex complete",
-        "returning dataframe",
+    
+        # dataset construction
+        "full dataframe created","boolean conversion complete","sleepfm matrix created","alignment verified",
+    
+        # feature selection
+        "feature selection started","feature ranking returned","feature subset selected",
+    
+        # final handcrafted preprocessing
+        "final imputation complete","final scaling complete",
+    
+        # hybrid model
+        "hybrid model created","hybrid training started","hybrid training complete",
+    
+        # saving
+        "model saved",
+    
+        # feature_extraction internal stages
+        "extract_physiological_features","channels standardized","quality assessment started",
+        "EEG processed","ECG processed","EMG processed","resp processed","EOG processed",
+        "parallel processing complete","parallel results flattened","synchrony complete",
+        "pivot complete","reindex complete","returning dataframe",
     ]
 
     # Defined Metrics/Attributes per Checkpoint (Dimension 1)
