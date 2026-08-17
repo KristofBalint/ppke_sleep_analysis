@@ -247,6 +247,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     patient_data_file = os.path.join(data_folder, DEMOGRAPHICS_FILE)
     patient_metadata_list = find_patients(patient_data_file)
     num_records = len(patient_metadata_list)
+    team_debug.update_success("patients found",message=f"num_records={num_records}")
 
     if num_records == 0:
         raise FileNotFoundError('No data were provided.')
@@ -262,10 +263,29 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
     category_lookup = get_category_map(DEFAULT_CSV_PATH)
     
-    config = SleepFMConfig(checkpoint_path=checkpoint_path,freeze_backbone=True, debug=False,verbose=verbose)
-    #extractor = FeatureExtractorStrategy(config)
-    sleepfm_encoder = load_sleepfm(config)
-    sleepfm_preprocessor=SleepFMPreprocessor(config)
+    try:
+        config = SleepFMConfig(checkpoint_path=checkpoint_path,freeze_backbone=True,debug=False,verbose=verbose,)
+    
+        sleepfm_encoder = load_sleepfm(config)
+        sleepfm_preprocessor = SleepFMPreprocessor(config)
+    
+        team_debug.update_success(
+            "sleepfm initialized",
+            message=(
+                f"checkpoint={checkpoint_path}; "
+                f"device={config.device}; "
+                f"embedding_dim={config.embedding_dimension}"
+            ),
+        )
+    
+    except Exception as e:
+        team_debug.update_failure(
+            "sleepfm initialized",
+            message=str(e),
+            exc=e,
+        )
+    
+        raise RuntimeError("SleepFM initialization failed.\n"+ team_debug.summary()) from e
     
     handcrafted_rows = []
     sleepfm_rows = []
@@ -287,6 +307,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             patient_id = record[HEADERS['bids_folder']]
             site_id = record[HEADERS['site_id']]
             session_id = record[HEADERS['session_id']]
+            team_debug.update_success("patient started",patient_id=patient_id,iteration=i,message=f"site={site_id}; session={session_id}")
 
             if verbose:
                 pbar.set_postfix({"patient": patient_id})
@@ -294,7 +315,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             # Load the patient data.
             patient_data_file = os.path.join(data_folder, DEMOGRAPHICS_FILE)
             patient_data = load_demographics(patient_data_file, patient_id, session_id)
-            team_debug.update_success("patient_loaded", patient_id=patient_id, iteration=i)
+            team_debug.update_success("patient found", patient_id=patient_id, iteration=i)
             demographic_features = extract_demographic_features(patient_data)
             team_debug.update_success("demographics loaded", patient_id=patient_id, iteration=i)
 
@@ -327,14 +348,40 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 hypno = algorithmic_annotations["stage_caisr"]
                 # print(f"Hypnogram length before processing{len(hypno)}")
                 hypno = np.round(hypno.flatten()).astype(int)
+                team_debug.update_success(
+                    "hypnogram processed",
+                    patient_id=patient_id,
+                    iteration=i,
+                    message=(
+                        f"available={hypno is not None}; "
+                        f"length={len(hypno) if hypno is not None else 0}"
+                    ),
+                )
             else:
                 hypno = None
+                team_debug.update_failure(
+                    "hypnogram processed",
+                    patient_id=patient_id,
+                    iteration=i,
+                    message=(
+                        f"available={hypno is not None}; "
+                        f"length={len(hypno) if hypno is not None else 0}"
+                    ),
+                )
             physiological_features = extract_physiological_features(
                 physiological_data, physiological_fs,
                 csv_path=csv_path, category_lookup=category_lookup,
                 hypnogram=hypno, patient_id=patient_id,
                 session_id=session_id)  # This function can rename, re-reference, resample, etc. the signal data.
-            team_debug.update_success("feature extraction returned", patient_id=patient_id, iteration=i)
+            team_debug.update_success(
+                "feature extraction returned",
+                patient_id=patient_id,
+                iteration=i,
+                message=(
+                    f"shape={physiological_features.shape}; "
+                    f"non_nan={int(physiological_features.notna().sum().sum())}"
+                ),
+            )
             pd.DataFrame({"patient": [patient_id]}).to_csv(backup, mode="a", header=not header_written, index=False)
             header_written = True
             team_debug.update_success("backup written", patient_id=patient_id, iteration=i)
@@ -365,26 +412,59 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 continue
             if label not in (0,1):
                 continue
-            feat_df = add_patient_level_features(physiological_features,demographic_features,
-                                                algorithmic_features,label=label,)
-           if len(feat_df) != 1:
+            feat_df = add_patient_level_features(physiological_features,demographic_features,algorithmic_features,label=label,)
+            team_debug.update_success(
+                "patient feature row created",
+                patient_id=patient_id,
+                iteration=i,
+                message=(
+                    f"shape={feat_df.shape}; "
+                    f"label={label}"
+                ),
+            )
+            if len(feat_df) != 1:
                 raise RuntimeError(
                     f"Expected one handcrafted row for "
                     f"{patient_id}, got {len(feat_df)}."
                 )
             modality_signals, modality_fs = (build_sleepfm_modalities( physiological_data, physiological_fs, category_lookup, csv_path=csv_path, ))
+            modality_counts = {
+                modality: len(channels)
+                for modality, channels
+                in modality_signals.items()
+            }
+            
+            team_debug.update_success(
+                "sleepfm modalities built",
+                patient_id=patient_id,
+                iteration=i,
+                message=f"channels={modality_counts}",
+            )
             sleepfm_embedding = (extract_sleepfm_patient_embedding( sleepfm_encoder, sleepfm_preprocessor, modality_signals, modality_fs, ))
-
+            team_debug.update_success(
+                "sleepfm preprocessing started",
+                patient_id=patient_id,
+                iteration=i,
+                message="Calling SleepFM preprocessing/encoder",
+            )
             if sleepfm_embedding.shape != (config.embedding_dimension,):
-                raise RuntimeError(
-                    f"SleepFM embedding shape mismatch "
-                    f"for {patient_id}: "
-                    f"{sleepfm_embedding.shape}"
-                )
+                team_debug.update_failure("sleepfm preprocessing started",patient_id=patient_id,iteration=i,
+                                          message=f"calculated shape {sleepfm_embedding.shape} compared to configuration shape {config.embedding_dimension}")
+                error_mes=( f"SleepFM embedding shape mismatch " + team_debug.summary())
+                raise RuntimeError(error_mes)
             handcrafted_rows.append( feat_df )
             sleepfm_rows.append( sleepfm_embedding )
             labels.append( label )
-            
+            team_debug.update_success(
+                "patient appended",
+                patient_id=patient_id,
+                iteration=i,
+                message=(
+                    f"HC={len(handcrafted_rows)}; "
+                    f"SleepFM={len(sleepfm_rows)}; "
+                    f"labels={len(labels)}"
+                ),
+            )
             #--------------------------------------------------------------
             # Extract embeddings, currently non-used, until problems with our code is identified
             #sleepfm_emb = extractor.extract_features(modality_signals)
@@ -410,11 +490,28 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
         raise RuntimeError( error_message )
     
     full_df = pd.concat( handcrafted_rows, ignore_index=True, )
+    team_debug.update_success(
+        "full dataframe created",
+        message=(
+            f"shape={full_df.shape}; "
+            f"patients={len(full_df)}"
+        ),
+    )
     all_bool_cols = [c for c in X.columns if "is_flat" in c or "amp_out_of_bounds" in c]
     for col in all_bool_cols:
         full_df[col] = full_df[col].astype("bool")
-    
+    team_debug.update_success(
+        "boolean conversion complete",
+        message=f"converted_columns={len(all_bool_cols)}",
+    )
     sleepfm_matrix = np.stack( sleepfm_rows, axis=0, ).astype(np.float32)
+    team_debug.update_success(
+        "sleepfm matrix created",
+        message=(
+            f"shape={sleepfm_matrix.shape}; "
+            f"finite={bool(np.isfinite(sleepfm_matrix).all())}"
+        ),
+    )
     y = np.asarray( labels, dtype=np.int64, )
 
     if not ( len(full_df) == len(sleepfm_matrix) == len(y) ):
@@ -423,12 +520,36 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             f"HC={len(full_df)}, "
             f"SleepFM={len(sleepfm_matrix)}, "
             f"labels={len(y)}"
+            f"debug messages: {team_debug.summary()}"
         )
-        
+    team_debug.update_success(
+        "alignment verified",
+        message=(
+            f"HC={len(full_df)}; "
+            f"SleepFM={len(sleepfm_matrix)}; "
+            f"labels={len(y)}"
+        ),
+    )
+    
     params = {'max_depth': 7, 'learning_rate': 0.030842680992267595, 'n_estimators': 963, 'subsample': 0.668562285184131, 'colsample_bytree': 0.6664590708996059, 
               'gamma': 1.0645185377275237, 'min_child_weight': 16, 'reg_alpha': 0.0600354240141498, 'reg_lambda': 35.771321493090454}
+    team_debug.update_success(
+        "feature selection started",
+        message=(
+            f"input_shape={full_df.shape}; "
+            f"labels={len(y)}"
+        ),
+    )
     ranked_features = (stratified_pca_feature_selection( full_df, pd.Series(y), params, ) )
+    team_debug.update_success(
+        "feature ranking returned",
+        message=f"ranked_features={len(ranked_features)}",
+    )
     selected_features = choose_feature_subset( full_df, ranked_features, params, )
+    team_debug.update_success(
+        "feature subset selected",
+        message=f"selected_features={len(selected_features)}",
+    )
     selected_features = [ feature for feature in selected_features if full_df[feature].notna().any() ]
     if not selected_features:
         error_message=(f"No selected handcrafted features remain."
@@ -440,22 +561,53 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     imputer = SimpleImputer( strategy="median", keep_empty_features=True, )
     scaler = StandardScaler()
     handcrafted_imputed = imputer.fit_transform( handcrafted_raw )
+    team_debug.update_success(
+        "final imputation complete",
+        message=(
+            f"shape={handcrafted_imputed.shape}; "
+            f"nan_count={int(np.isnan(handcrafted_imputed).sum())}"
+        ),
+    )
     handcrafted_matrix = scaler.fit_transform( handcrafted_imputed ).astype(np.float32)
-
+    team_debug.update_success(
+    "final scaling complete",
+        message=(
+            f"shape={handcrafted_matrix.shape}; "
+            f"finite={bool(np.isfinite(handcrafted_matrix).all())}"
+        ),
+    )
+    
     if np.isnan(handcrafted_matrix).any():
-        raise RuntimeError( "NaNs remain after final handcrafted preprocessing." )
+        error_message="NaNs remain after final handcrafted preprocessing." +team_debug.summary()
+        raise RuntimeError( )
 
     if not np.isfinite(handcrafted_matrix).all():
-        raise RuntimeError( "Non-finite handcrafted values remain." )
+        error_message="Non-finite handcrafted values remain."+team_debug.summary()
+        raise RuntimeError( error_message )
         
     model = HybridStrategy( config=config, handcrafted_dim=handcrafted_matrix.shape[1], num_classes=1, )
+    
     # Replace HybridStrategy's newly initialized encoder
     # with the exact pretrained encoder used to generate sleepfm_matrix.
     model.backbone = sleepfm_encoder
     
     freeze_backbone(model.backbone)
+    team_debug.update_success(
+        "hybrid model created",
+        message=(
+            f"handcrafted_dim={handcrafted_matrix.shape[1]}; "
+            f"sleepfm_dim={config.embedding_dimension}"
+        ),
+    )
+    team_debug.update_success(
+        "hybrid training started",
+        message=f"patients={len(y)}",
+    )
     model = train_hybrid_head( model,handcrafted_matrix,sleepfm_matrix,y,config, )
-    
+    team_debug.update_success(
+        "hybrid training complete",
+        message="Hybrid fusion head training returned successfully",
+    )
     os.makedirs( model_folder, exist_ok=True, )
     
     save_model(
@@ -465,6 +617,10 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
         handcrafted_imputer=imputer,
         handcrafted_scaler=scaler,
         config=config,
+    )
+    team_debug.update_success(
+        "model saved",
+        message=f"model_folder={model_folder}",
     )
 
     if verbose:
