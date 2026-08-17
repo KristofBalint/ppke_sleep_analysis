@@ -60,15 +60,20 @@ class SleepFMConfig:
     # Input signals
 
     expected_sampling_frequency: int = 128
-    window_length_seconds: int = 5
-    window_stride_seconds: int = 5
+    #window_length_seconds: int = 5
+    #window_stride_seconds: int = 5
     normalize_signals: bool = True
     normalization_method: str = "zscore"
     clip_value: Optional[float] = 8.0
 
+    # Original SleepFM works on 5-minute recording chunks.
+    sampling_duration_minutes: int = 5
+    patch_size: int = 3840
+    maximum_sequence_length: int = 128
+    embedding_chunk_batch_size: int = 16
     # Patch tokenizer
 
-    patch_size: int = 640
+    #patch_size: int = 640
     embedding_dimension: int = 128
 
     # Transformer
@@ -77,7 +82,7 @@ class SleepFMConfig:
     num_attention_heads: int = 8
     pooling_heads: int = 4
     dropout: float = 0.10
-    maximum_sequence_length: int = 2048
+    #maximum_sequence_length: int = 2048
     challenge_mode: bool = True
 
     # Channel handling
@@ -179,14 +184,23 @@ class SleepFMPreprocessor:
     def __init__(self, config: SleepFMConfig):
         self.config = config
         self.fs = config.expected_sampling_frequency
-        self.window_samples = (
-                config.window_length_seconds
-                * config.expected_sampling_frequency
-        )
-        self.stride_samples = (
-                config.window_stride_seconds
-                * config.expected_sampling_frequency
-        )
+        self.chunk_samples = (config.sampling_duration_minutes * 60 * config.expected_sampling_frequency )
+        self.patch_size = config.patch_size
+        
+        if self.chunk_samples % self.patch_size != 0:
+            raise ValueError(
+                f"SleepFM chunk length ({self.chunk_samples}) must be "
+                f"divisible by patch_size ({self.patch_size})."
+            )
+        
+        self.tokens_per_chunk = ( self.chunk_samples // self.patch_size )
+        
+        if self.tokens_per_chunk > config.maximum_sequence_length:
+            raise ValueError(
+                f"A SleepFM chunk creates {self.tokens_per_chunk} tokens, "
+                f"but maximum_sequence_length="
+                f"{config.maximum_sequence_length}."
+            )
 
     # Public API
 
@@ -234,19 +248,15 @@ class SleepFMPreprocessor:
 
     # Processing pipeline
 
-    def _process_modality(self, modality: str, signals: Dict[str, np.ndarray],
-                          original_fs: Optional[
-                              Union[int, Dict[str, int]]] = None):
-
+    def _process_modality(self, modality: str, signals: Dict[str, np.ndarray],original_fs: Optional[Union[int, Dict[str, int]]] = None):
         processed = []
         for channel_name, signal in signals.items():
-            chan_fs = original_fs.get(channel_name) if isinstance(original_fs,
-                                                                  dict) else original_fs
+            chan_fs = original_fs.get(channel_name) if isinstance(original_fs,dict) else original_fs
             signal = self._validate_signal(signal)
             signal = self._resample(signal, original_fs=chan_fs)
             signal = self._normalize(signal)
-            windowed = self.create_windows(signal)
-            processed.append(windowed)
+            chunks = self.create_chunks(signal) 
+            processed.append(chunks)
 
         tensor, mask = self._stack_channels(processed, modality)
 
@@ -266,8 +276,7 @@ class SleepFMPreprocessor:
 
     # Resampling
 
-    def _resample(self, signal: np.ndarray,
-                  original_fs: Optional[int] = None) -> np.ndarray:
+    def _resample(self, signal: np.ndarray,original_fs: Optional[int] = None) -> np.ndarray:
         if original_fs is None or original_fs == self.fs:
             return signal
         target_length = int(len(signal) * self.fs / original_fs)
@@ -276,7 +285,6 @@ class SleepFMPreprocessor:
     # Normalisation
 
     def _normalize(self, signal: np.ndarray) -> np.ndarray:
-
         if not self.config.normalize_signals:
             return signal
 
@@ -298,7 +306,8 @@ class SleepFMPreprocessor:
         return signal.astype(np.float32)
 
     # Windowing
-
+    # The original had problems
+    '''
     def create_windows(self, signal: np.ndarray) -> np.ndarray:
         if len(signal) == 0:
             return np.empty((0, self.window_samples), dtype=np.float32)
@@ -312,44 +321,79 @@ class SleepFMPreprocessor:
         if len(windows) == 0:
             return np.empty((0, self.window_samples), dtype=np.float32)
         return np.asarray(windows, dtype=np.float32)
+    '''
 
+    def create_chunks(self, signal: np.ndarray, ) -> np.ndarray:
+        """
+        Divide one channel into fixed-duration SleepFM chunks.
+    
+        Returns
+        -------
+        np.ndarray
+            Shape:
+                (num_chunks, chunk_samples)
+    
+        Notes
+        -----
+        SleepFM's SetTransformer tokenizer will itself divide each
+        chunk into patch_size-sized temporal tokens. Therefore this
+        function must NOT perform the 30-second patching itself.
+        """
+    
+        signal = np.asarray( signal, dtype=np.float32, )
+    
+        if len(signal) == 0:
+            return np.empty( (0, self.chunk_samples), dtype=np.float32, )
+    
+        # A recording shorter than one SleepFM chunk is padded toproduce one valid chunk.
+        if len(signal) < self.chunk_samples:
+            signal = np.pad( signal, ( 0, self.chunk_samples - len(signal), ), mode="constant", )
+            return signal.reshape( 1, self.chunk_samples, )
+    
+        # Match the original SleepFM dataset behaviour:use complete chunks and discard the final incomplete part.
+        num_chunks = ( len(signal) // self.chunk_samples )
+        usable_samples = ( num_chunks * self.chunk_samples )
+        signal = signal[:usable_samples]
+        chunks = signal.reshape( num_chunks, self.chunk_samples, )
+        return chunks.astype( np.float32, copy=False, )
+        
     # Channel padding
 
-    def _stack_channels(self, windows_list: List[np.ndarray], modality: str) -> \
-    Tuple[torch.Tensor, torch.Tensor]:
-        max_channels = self.config.maximum_channels_per_modality[modality]
-
-        # Check if any channel returned non-empty windows
-        has_valid_windows = any(
-            isinstance(w, np.ndarray) and w.ndim == 2 and w.shape[0] > 0 for w
-            in windows_list)
-
-        if not has_valid_windows:
-            # Explicitly force shape (max_channels, 1, window_samples) with all channels masked out
-            tensor = torch.zeros((max_channels, 1, self.window_samples),
-                                 dtype=torch.float32)
-            mask = torch.ones(max_channels,
-                              dtype=torch.bool)  # True = masked/ignored channel
+    
+    def _stack_channels(self, chunks_list: List[np.ndarray], modality: str, ) -> Tuple[torch.Tensor, torch.Tensor]:
+        max_channels = ( self.config.maximum_channels_per_modality[ modality ] )
+        valid_chunks = [ x for x in chunks_list if ( isinstance(x, np.ndarray) and x.ndim == 2 and x.shape[0] > 0 ) ]
+        if not valid_chunks:
+            # One dummy chunk.
+            tensor = torch.zeros( ( 1, max_channels, self.chunk_samples, ), dtype=torch.float32, )
+            mask = torch.ones( max_channels, dtype=torch.bool, )
             return tensor, mask
-
-        # Filter out empty arrays if some channels in the modality had signals and others were empty
-        valid_windows = [w for w in windows_list if
-                         isinstance(w, np.ndarray) and w.ndim == 2 and w.shape[
-                             0] > 0]
-        num_windows = valid_windows[0].shape[0]
-
-        stacked = np.stack(valid_windows,
-                           axis=0)  # Shape: (channels, num_windows, window_samples)
+    
+        # Respect maximum channel count.
+        if len(valid_chunks) > max_channels:
+            valid_chunks = valid_chunks[ :max_channels]
+    
+        # Different EDF channels can differ slightly in duration.
+        # Only retain chunks present in every channel.
+ 
+        num_chunks = min( x.shape[0] for x in valid_chunks )  
+        valid_chunks = [ x[:num_chunks] for x in valid_chunks]
+    
+        # Current shape:
+        #     (channels, chunks, samples)
+        stacked = np.stack(valid_chunks, axis=0,)
         channels = stacked.shape[0]
-
-        padded = np.zeros((max_channels, num_windows, self.window_samples),
-                          dtype=np.float32)
-        padded[:channels] = stacked
-
-        mask = np.ones(max_channels, dtype=bool)
-        mask[:channels] = False  # False = active channel
-
-        return torch.from_numpy(padded), torch.from_numpy(mask)
+    
+        # Convert to:
+        #     (chunks, channels, samples)
+        stacked = np.transpose( stacked, (1, 0, 2), )
+        padded = np.zeros( ( num_chunks, max_channels, self.chunk_samples, ), dtype=np.float32, )
+        padded[:, :channels, :] = stacked
+    
+        mask = np.ones( max_channels, dtype=bool,)
+        mask[:channels] = False   
+    
+        return ( torch.from_numpy(padded), torch.from_numpy(mask),)
 
 
 class SleepFMCheckpoint:
@@ -365,28 +409,20 @@ class SleepFMCheckpoint:
 
     # Checkpoint loading
 
-    def load_backbone(self, model: nn.Module,
-                      checkpoint_path: Optional[Path] = None, ) -> nn.Module:
-
+    def load_backbone(self, model: nn.Module,checkpoint_path: Optional[Path] = None, ) -> nn.Module:
         if checkpoint_path is None:
             checkpoint_path = self.config.checkpoint_path
 
         if checkpoint_path is None:
-            raise ValueError(
-                "No checkpoint path specified."
-            )
+            raise ValueError("No checkpoint path specified.")
 
         checkpoint_path = Path(checkpoint_path)
-
         if not checkpoint_path.exists():
             raise FileNotFoundError(checkpoint_path)
 
         checkpoint = torch.load(checkpoint_path, map_location=self.device, )
-
         state_dict = self._extract_state_dict(checkpoint)
-
-        incompatible = model.load_state_dict(state_dict,
-                                             strict=self.config.strict_checkpoint_loading, )
+        incompatible = model.load_state_dict(state_dict,strict=self.config.strict_checkpoint_loading, )
 
         if self.config.verbose:
             self._print_loading_report(checkpoint_path, incompatible, )
@@ -397,51 +433,40 @@ class SleepFMCheckpoint:
 
     # Saving
 
-    def save_checkpoint(self, model: nn.Module, output_path: Path,
-                        metadata: Optional[Dict] = None, ):
-
+    def save_checkpoint(self, model: nn.Module, output_path: Path,metadata: Optional[Dict] = None, ):
         output = {
             "state_dict": model.state_dict(),
             "metadata": metadata,
         }
-
         torch.save(output, output_path, )
 
     # Extract state_dict
 
     def _extract_state_dict(self, checkpoint: Dict, ) -> Dict:
-
         if "state_dict" in checkpoint:
             return checkpoint["state_dict"]
-
         if "model_state_dict" in checkpoint:
             return checkpoint["model_state_dict"]
-
         return checkpoint
 
     # Freeze
 
     def freeze_model(self, model: nn.Module, ):
-
         for parameter in model.parameters():
             parameter.requires_grad = False
 
     # Unfreeze everything
 
     def unfreeze_model(self, model: nn.Module, ):
-
         for parameter in model.parameters():
             parameter.requires_grad = True
 
     # Unfreeze last transformer layers
 
     def unfreeze_last_layers(self, transformer: nn.Module, n_layers: int, ):
-
         if n_layers <= 0:
             return
-
         layers = list(transformer.transformer_encoder.layers)
-
         for layer in layers[-n_layers:]:
             for parameter in layer.parameters():
                 parameter.requires_grad = True
@@ -511,20 +536,16 @@ class SleepFMEncoder(nn.Module):
     That is delegated to SleepFMPreprocessor.
     """
 
-    def __init__(self, config: SleepFMConfig, checkpoint_handler: Optional[
-        SleepFMCheckpoint] = None, ) -> None:
+    def __init__(self, config: SleepFMConfig, checkpoint_handler: Optional[SleepFMCheckpoint] = None, ) -> None:
 
         super().__init__()
 
         self.config = config
         self.checkpoint_handler = checkpoint_handler
-
         # Build original SleepFM backbone.
-
         self.backbone = self._build_backbone()
 
         # Load checkpoint if requested.
-
         if (checkpoint_handler is not None and config.load_pretrained):
             checkpoint_handler.load_backbone(self.backbone)
 
@@ -558,8 +579,7 @@ class SleepFMEncoder(nn.Module):
 
     # Checkpoint handling
 
-    def load_checkpoint(self, checkpoint: str | Path,
-                        strict: bool = False) -> None:
+    def load_checkpoint(self, checkpoint: str | Path,strict: bool = False) -> None:
         """
         Load a pretrained checkpoint into the backbone.
         """
@@ -643,7 +663,7 @@ class SleepFMEncoder(nn.Module):
         Output embedding dimensionality.
         """
 
-        return self.config.embedding_dim
+        return self.config.embedding_dimension
 
     def trainable_parameters(self):
         """
@@ -680,179 +700,129 @@ class SleepFMEncoder(nn.Module):
     def extra_repr(self) -> str:
 
         return (
-            f"embed_dim={self.config.embedding_dim}, "
-            f"layers={self.config.num_layers}, "
-            f"heads={self.config.num_heads}, "
+            f"embed_dim={self.config.embedding_dimension}, "
+            f"layers={self.config.num_transformer_layers}, "
+            f"heads={self.config.num_attention_heads}, "
             f"frozen={self.config.freeze_backbone}"
         )
 
     # Internal forward helper
 
-    def _forward_single(self, signal: torch.Tensor,
-                        mask: Optional[torch.Tensor] = None, ):
-
+    def _forward_single(self,signal: torch.Tensor,mask: Optional[torch.Tensor] = None,):
         """
-        Forward one modality through the original SleepFM SetTransformer.
-
+        Encode one SleepFM modality.
         Parameters
         ----------
-        signal:
-            Either
-
-                (C, S, T_window)
-
-            or
-
-                (B, C, S, T_window)
-
-            where T_window should equal config.patch_size.
-
-        mask:
-            Channel padding mask.
-
-            Either
-
+        signal
+            Tensor with shape:
+                (B, C, T)
+            where B is the number of 5-minute chunks.
+        mask
+            Channel mask with shape:
                 (C,)
-
             or
-
                 (B, C)
-
-            where True means that the channel is padding and should
-            be ignored by SleepFM.
-
+            True indicates a padded channel.
         Returns
         -------
-        pooled_embedding:
-            Tensor of shape (B, embedding_dimension).
-
-        sequence_embedding:
-            Tensor of shape (B, sequence_length, embedding_dimension).
+        pooled_embedding
+            Shape:
+                (B, embedding_dimension)
+            One pooled SleepFM embedding per 5-minute chunk.
+        sequence_embedding
+            Shape:
+                (B, S, embedding_dimension)
+            S is normally 10 for 5-minute chunks with
+            30-second patches.
         """
-
-        signal = signal.to(device=self.device,
-                           dtype=self.config.embedding_dtype, )
-
-        self._debug(f"_forward_single(): input shape={tuple(signal.shape)}")
-        self._debug(
-            f"_forward_single(): "
-            f"channel count={signal.shape[1]}"
-        )
-        # ---------------------------------------------------------
-        # Note to myself: 
-        #
-        # Preprocessor:
-        #     (C, S, T_window)
-        #
-        # SleepFM expects:
-        #     (B, C, T)
-        #
-        # The ORIGINAL SleepFM Tokenizer will subsequently divide
-        # T into patch_size-sized patches.
-        # ---------------------------------------------------------
-
-        if signal.ndim == 3:
-            # (C, S, T_window)
-            C, S, T_window = signal.shape
-
-            if T_window != self.config.patch_size:
-                raise ValueError(
-                    f"Expected window length {self.config.patch_size} samples, "
-                    f"but received {T_window}."
-                )
-
-            self._debug(
-                f"_forward_single(): "
-                f"C={C}, S={S}, T_window={T_window}"
-            )
-
-            signal = signal.reshape(
-                1,
-                C,
-                S * T_window,
-            )
-
-
-
-        elif signal.ndim == 4:
-            # (B, C, S, T_window)
-            B, C, S, T_window = signal.shape
-
-            if T_window != self.config.patch_size:
-                raise ValueError(
-                    f"Expected window length {self.config.patch_size} samples, "
-                    f"but received {T_window}."
-                )
-
-            signal = signal.reshape(
-                B,
-                C,
-                S * T_window,
-            )
-
-        elif signal.ndim == 2:
-            # (C, T)
-            C, T = signal.shape
-
+    
+        signal = signal.to(device=self.device,dtype=self.config.embedding_dtype, )
+    
+        # Permit a single unbatched chunk.
+        if signal.ndim == 2:
             signal = signal.unsqueeze(0)
-
-        else:
+    
+        if signal.ndim != 3:
             raise ValueError(
                 "SleepFM input must have shape "
-                "(C,T), (C,S,T_window), or (B,C,S,T_window). "
-                f"Received shape {tuple(signal.shape)}."
+                "(C,T) or (B,C,T). "
+                f"Received {tuple(signal.shape)}."
             )
-
-        # Prepare channel mask
+    
+        B, C, T = signal.shape
+    
+        if T % self.config.patch_size != 0:
+            raise ValueError(
+                f"SleepFM chunk length {T} is not divisible "
+                f"by patch_size={self.config.patch_size}."
+            )
+    
+        sequence_length = ( T // self.config.patch_size )
+        if (sequence_length > self.config.maximum_sequence_length ):
+            raise ValueError(
+                f"SleepFM chunk produces "
+                f"{sequence_length} tokens, but "
+                f"maximum_sequence_length="
+                f"{self.config.maximum_sequence_length}."
+            )
+    
+        self._debug(
+            f"_forward_single: "
+            f"B={B} chunks, C={C} channels, "
+            f"T={T}, tokens/chunk={sequence_length}"
+        )
+    
+        # Channel mask
 
         if mask is None:
-            mask = torch.zeros(signal.shape[0], signal.shape[1],
-                               dtype=torch.bool, device=self.device, )
-
+            mask = torch.zeros((B, C), dtype=torch.bool,device=self.device, )
         else:
-            mask = mask.to(device=self.device, dtype=torch.bool, )
-
+            mask = mask.to(device=self.device,dtype=torch.bool,)
             if mask.ndim == 1:
-                # (C,) -> (1,C)
-                mask = mask.unsqueeze(0)
-
-            elif mask.ndim != 2:
+                if len(mask) != C:
+                    raise ValueError(
+                        f"Channel mask has {len(mask)} entries "
+                        f"but signal has {C} channels."
+                    )
+                mask = (mask.unsqueeze(0).expand(B, -1))
+            elif mask.ndim == 2:
+                if mask.shape != (B, C):
+                    raise ValueError(
+                        f"Expected mask shape {(B, C)}, "
+                        f"received {tuple(mask.shape)}."
+                    )
+            else:
                 raise ValueError(
-                    "SleepFM channel mask must have shape "
-                    "(C,) or (B,C). "
-                    f"Received shape {tuple(mask.shape)}."
+                    "SleepFM mask must have shape "
+                    "(C,) or (B,C)."
                 )
+    
+        # Avoid putting every 5-minute chunk through the CNN/
+        # Transformer at once.
 
-            if mask.shape[0] == 1 and signal.shape[0] > 1:
-                mask = mask.expand(signal.shape[0], -1)
-
-            if mask.shape != signal.shape[:2]:
-                raise ValueError(
-                    "SleepFM mask shape does not match signal shape. "
-                    f"Signal: {tuple(signal.shape)}, "
-                    f"mask: {tuple(mask.shape)}."
-                )
-
-        pooled_embedding, sequence_embedding = self.backbone(
-            signal,
-            mask,
-        )
-
-        return pooled_embedding, sequence_embedding
+        batch_size = getattr(self.config,"embedding_chunk_batch_size",16,)
+        pooled_parts = []
+        sequence_parts = []
+    
+        for start in range(0,B,batch_size,):
+            end = min(start + batch_size, B,)
+            pooled, sequence = self.backbone(signal[start:end],mask[start:end],)
+            pooled_parts.append(pooled)
+            sequence_parts.append(sequence)
+    
+        pooled_embedding = torch.cat(pooled_parts,dim=0,)
+        sequence_embedding = torch.cat(sequence_parts,dim=0,)
+        return ( pooled_embedding,sequence_embedding,)
 
     def forward(self,
-                modality_tensors: Union[
-                    Dict[str, torch.Tensor], List[torch.Tensor]],
-                modality_masks: Optional[
-                    Union[Dict[str, torch.Tensor], List[torch.Tensor]]] = None,
+                modality_tensors: Union[Dict[str, torch.Tensor], List[torch.Tensor]],
+                modality_masks: Optional[Union[Dict[str, torch.Tensor], List[torch.Tensor]]] = None,
                 ):
         """
         Forward every available modality.
-
         Returns
         -------
         dict
-
             {
                 modality:
                 {
@@ -940,12 +910,10 @@ class SleepFMEncoder(nn.Module):
         outputs = {}
         if isinstance(modality_tensors, list):
             items = enumerate(modality_tensors)
-            get_mask = lambda idx: modality_masks[
-                idx] if modality_masks is not None else None
+            get_mask = lambda idx: modality_masks[idx] if modality_masks is not None else None
         else:
             items = modality_tensors.items()
-            get_mask = lambda key: modality_masks[
-                key] if modality_masks is not None and key in modality_masks else None
+            get_mask = lambda key: modality_masks[key] if modality_masks is not None and key in modality_masks else None
         for key, tensor in items:
             mask = get_mask(key)
             pooled, sequence = self._forward_single(tensor, mask)
@@ -982,57 +950,37 @@ class SleepFMEncoder(nn.Module):
         """
         Return CNN token embeddings before
         any transformer layers.
-
         Shape
-
-            (B,C,T)
-
-        ->
-            (B,C,S,E)
+            (B,C,T) -> (B,C,S,E)
         """
-
         self.eval()
-
         signal = signal.to(self.device)
-
         return self.backbone.patch_embedding(signal)
 
     @torch.no_grad()
     def encode_mean(self, modality_tensors, modality_masks, ):
         """
         Return one embedding for the entire recording.
-
         Multiple modality embeddings are averaged.
         """
 
         embeddings = self.encode(modality_tensors, modality_masks, )
-
         stacked = torch.stack(list(embeddings.values()), dim=0, )
-
         return stacked.mean(dim=0)
 
     @torch.no_grad()
     def encode_concat(self, modality_tensors, modality_masks, ):
         """
         Concatenate all modality embeddings.
-
         Example
-
         EEG 128
-
         RESP 128
-
         ECG 128
-
         -->
-
         384 dimensional vector
         """
 
-        embeddings = self.encode(
-            modality_tensors,
-            modality_masks,
-        )
+        embeddings = self.encode(modality_tensors,modality_masks,)
 
         ordered = []
 
@@ -1041,8 +989,7 @@ class SleepFMEncoder(nn.Module):
 
         return torch.cat(ordered, dim=-1, )
 
-    def embedding_size(self, num_modalities: int = 1,
-                       aggregation: str = "mean", ):
+    def embedding_size(self, num_modalities: int = 1,aggregation: str = "mean", ):
         """
         Return output dimensionality.
         """
@@ -1137,7 +1084,37 @@ def unfreeze_last_layers(model: nn.Module, n_layers: int) -> None:
         for param in layer.parameters():
             param.requires_grad = True
 
+@torch.no_grad()
+def extract_sleepfm_patient_embedding(encoder,preprocessor,modality_signals,modality_fs,):
+    """
+    Produce one patient-level SleepFM vector by averaging the pooled
+    embeddings from the actually present modalities.
+    Missing/all-padded modalities do not participate in the mean.
+    """
 
+    encoder.eval()
+    tensors, masks = preprocessor.preprocess(modality_signals,sampling_frequencies=modality_fs,)
+    outputs = encoder(tensors,masks,)
+    valid_embeddings = []
+
+    for idx, output in outputs.items():
+        mask = masks[idx]
+        if bool(mask.all()):
+            continue
+        chunk_embeddings = output["embedding"]
+        # One SleepFM representation for this modality
+        # across the full night.
+        modality_embedding = (chunk_embeddings.mean(dim=0,keepdim=True,))
+        valid_embeddings.append(modality_embedding)
+    
+    if not valid_embeddings:
+        raise RuntimeError("No valid SleepFM modalities were available.")
+    
+    # Mean across BAS / RESP / EKG / EMG.
+    deep_embedding = torch.stack(valid_embeddings,dim=0,).mean(dim=0)
+    
+    return (deep_embedding.squeeze(0).cpu().numpy().astype(np.float32))
+#implementations of different strategies
 class FeatureExtractorStrategy:
     """
     Strategy 1: Frozen feature extraction strategy using SleepFM as a static embedding generator.
@@ -1149,8 +1126,7 @@ class FeatureExtractorStrategy:
         self.model = load_sleepfm(config)
         freeze_backbone(self.model)
 
-    def extract_features(self, modality_signals: Dict[
-        str, Dict[str, np.ndarray]]) -> np.ndarray:
+    def extract_features(self, modality_signals: Dict[str, Dict[str, np.ndarray]]) -> np.ndarray:
         tensors, masks = self.preprocessor.preprocess(modality_signals)
         with torch.no_grad():
             combined_tensor = self.model.encode_concat(tensors, masks)
@@ -1220,12 +1196,12 @@ class HybridStrategy(nn.Module):
         SleepFM patient embedding
                                 I
                                 V
-                         I── handcrafted features
+                         I---handcrafted features
                          I    I  
                          I    V
                          I   projection
-                         I
-        SleepFM embedding ──────I
+                         I     I
+        SleepFM embedding -----I
                          I
                          V
                     concatenation
@@ -1237,12 +1213,7 @@ class HybridStrategy(nn.Module):
                        logits
     """
 
-    def __init__(
-        self,
-        config: SleepFMConfig,
-        handcrafted_dim: int,
-        num_classes: int = 2,
-    ):
+    def __init__(self,config: SleepFMConfig,handcrafted_dim: int, num_classes: int = 2,):
         super().__init__()
 
         self.config = config
@@ -1261,7 +1232,7 @@ class HybridStrategy(nn.Module):
                 handcrafted_dim,
                 config.handcrafted_projection_dimension,
             ),
-            nn.BatchNorm1d(
+            nn.LayerNorm(
                 config.handcrafted_projection_dimension
             ),
             nn.ReLU(),
@@ -1283,37 +1254,33 @@ class HybridStrategy(nn.Module):
 
     def forward(
         self,
-        modality_tensors: Union[
-            Dict[str, torch.Tensor],
-            List[torch.Tensor],
-        ],
+        modality_tensors: Union[Dict[str, torch.Tensor],List[torch.Tensor],],
         handcrafted_features: torch.Tensor,
-        modality_masks: Optional[
-            Union[
-                Dict[str, torch.Tensor],
-                List[torch.Tensor],
-            ]
-        ] = None,
+        modality_masks: Optional[Union[Dict[str, torch.Tensor],List[torch.Tensor],]] = None,
     ) -> torch.Tensor:
 
-        # 1. SleepFM
+        # SleepFM
+   
         sleepfm_outputs = self.backbone(
             modality_tensors,
             modality_masks,
         )
 
-        # 2. Extract pooled embedding from each modality
+        # Extract pooled embedding from each modality
+ 
         modality_embeddings = []
 
         for key, output in sleepfm_outputs.items():
+
             embedding = output["embedding"]
+
             modality_embeddings.append(embedding)
 
         if len(modality_embeddings) == 0:
             raise RuntimeError(
                 "SleepFMEncoder returned no modality embeddings."
             )
-        # 3. Fuse modalities
+        # Fuse modalities
 
         # Each embedding has shape:
         #     (B, embedding_dimension)
@@ -1322,17 +1289,107 @@ class HybridStrategy(nn.Module):
         # Mean:
         #     (B, embedding_dimension)
 
-        stacked_embeddings = torch.stack(modality_embeddings,dim=0,)
+        stacked_embeddings = torch.stack(
+            modality_embeddings,
+            dim=0,
+        )
+
         deep_embedding = stacked_embeddings.mean(dim=0)
 
-        # 4. Handcrafted branch
-        handcrafted_embedding = self.handcrafted_projection(handcrafted_features)
+        # Handcrafted branch
+ 
+        handcrafted_embedding = self.handcrafted_projection(
+            handcrafted_features
+        )
 
-        # 5. Hybrid fusion
-        fused_vector = torch.cat([deep_embedding,handcrafted_embedding,],dim=-1,)
+        # Hybrid fusion
+        fused_vector = torch.cat(
+            [
+                deep_embedding,
+                handcrafted_embedding,
+            ],
+            dim=-1,
+        )
 
-        # 6. Prediction
+        # Prediction
+   
         logits = self.fusion_classifier(
             fused_vector
         )
+
         return logits
+        
+    def forward_from_embeddings(self,
+        deep_embedding: torch.Tensor,
+        handcrafted_features: torch.Tensor,
+        ) -> torch.Tensor:
+
+        handcrafted_embedding = self.handcrafted_projection(
+            handcrafted_features
+        )
+    
+        fused_vector = torch.cat(
+            [deep_embedding, handcrafted_embedding],
+            dim=-1,
+        )
+    
+        return self.fusion_classifier(fused_vector)
+        
+def train_hybrid_head(model,handcrafted_matrix,sleepfm_matrix,labels,config,epochs=30,):
+    device = torch.device(config.device)
+    hc_tensor = torch.tensor(handcrafted_matrix,dtype=torch.float32,)
+    sleepfm_tensor = torch.tensor(sleepfm_matrix,dtype=torch.float32,)
+    y_tensor = torch.tensor(labels,dtype=torch.float32,).reshape(-1, 1)
+    dataset = TensorDataset(hc_tensor, sleepfm_tensor, y_tensor,)
+    loader = DataLoader(dataset,batch_size=min(config.batch_size, len(dataset)),shuffle=True,)
+    
+    model.to(device)
+    model.train()
+    
+    trainable_parameters = [p for p in model.parameters() if p.requires_grad        ]
+    
+    optimizer = torch.optim.AdamW( trainable_parameters, lr=config.learning_rate, weight_decay=config.weight_decay,)
+    
+    num_positive = float(np.sum(labels == 1))
+    num_negative = float(np.sum(labels == 0))
+    
+    if num_positive > 0:
+        pos_weight = torch.tensor( [num_negative / num_positive], device=device, )
+    
+        criterion = nn.BCEWithLogitsLoss( pos_weight=pos_weight )
+    else:
+        criterion = nn.BCEWithLogitsLoss()
+    
+    for epoch in range(epochs):
+    
+        running_loss = 0.0
+    
+        for hc_batch, sleepfm_batch, y_batch in loader:
+    
+            hc_batch = hc_batch.to(device)#nigger
+            sleepfm_batch = sleepfm_batch.to(device)
+            y_batch = y_batch.to(device)
+        
+            optimizer.zero_grad(set_to_none=True)
+        
+            logits = model.forward_from_embeddings( sleepfm_batch, hc_batch,)
+            loss = criterion( logits, y_batch,)
+            loss.backward()
+        
+            if config.gradient_clip_norm is not None:
+                torch.nn.utils.clip_grad_norm_( trainable_parameters, config.gradient_clip_norm, )
+        
+            optimizer.step()
+        
+            running_loss += ( loss.item() * len(hc_batch) )
+    
+        if config.verbose:
+            mean_loss = running_loss / len(dataset)
+            print(
+                f"Hybrid epoch {epoch + 1}/{epochs}, "
+                f"loss={mean_loss:.5f}"
+            )
+    
+    model.eval() 
+    
+    return model
