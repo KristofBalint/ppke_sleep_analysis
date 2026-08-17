@@ -8,6 +8,7 @@ from scipy.signal import resample
 from SleepFM.models.models import SetTransformer
 import torch
 from torch import nn
+from torch.utils.data import TensorDataset,DataLoader,
 '''
 import os
 import logging
@@ -1017,9 +1018,12 @@ def load_sleepfm(config: SleepFMConfig, checkpoint_path: Optional[
     model = SleepFMEncoder(config)
 
     path = Path(checkpoint_path) if checkpoint_path else config.checkpoint_path
-    if path and path.exists():
+    if path is not None:
+        if not path.exists():
+            raise FileNotFoundError( f"SleepFM checkpoint not found: {path}")
+    
         ckpt_handler = SleepFMCheckpoint(config)
-        model = ckpt_handler.load_backbone(model, checkpoint_path=path)
+        ckpt_handler.load_backbone(model.backbone,checkpoint_path=path,)
 
     model.to(config.device)
     model.eval()
