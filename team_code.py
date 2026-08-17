@@ -257,9 +257,21 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
     # Iterate over the records to extract the features and labels.
     features = list()
-    labels = list()
+    #labels = list()
     sleepfm_embeddings_array=list()
 
+    category_lookup = get_category_map(DEFAULT_CSV_PATH)
+    
+    config = SleepFMConfig(checkpoint_path=checkpoint_path,freeze_backbone=True, debug=False,verbose=verbose)
+    #extractor = FeatureExtractorStrategy(config)
+    sleepfm_encoder = load_sleepfm(config)
+    sleepfm_preprocessor=SleepFMPreprocessor(config)
+    
+    handcrafted_rows = []
+    sleepfm_rows = []
+    labels = []
+    
+    
     category_lookup = get_category_map(DEFAULT_CSV_PATH)
 
     pbar = tqdm(range(num_records), desc="Extracting Features", unit="record", disable=not verbose)
@@ -393,7 +405,9 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     pbar.close()
 
     if not handcrafted_rows:
-        raise RuntimeError( "No patients produced complete hybrid data." )
+        error_message=(f"No patients produced complete hybrid data."
+                      f"\n--- COLLECTOR DEBUG SUMMARY ---\n{team_debug.summary()}")
+        raise RuntimeError( error_message )
     
     full_df = pd.concat( handcrafted_rows, ignore_index=True, )
     all_bool_cols = [c for c in X.columns if "is_flat" in c or "amp_out_of_bounds" in c]
@@ -417,11 +431,11 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     selected_features = choose_feature_subset( full_df, ranked_features, params, )
     selected_features = [ feature for feature in selected_features if full_df[feature].notna().any() ]
     if not selected_features:
-        raise RuntimeError(
-            "No selected handcrafted features remain."
-        )
+        error_message=(f"No selected handcrafted features remain."
+                      f"\n--- COLLECTOR DEBUG SUMMARY ---\n{team_debug.summary()}")
+        raise RuntimeError(error_message)
         
-    handcrafted_raw = full_df[ selected_features ].to_numpy()
+    handcrafted_raw = full_df[selected_features ].to_numpy()
     
     imputer = SimpleImputer( strategy="median", keep_empty_features=True, )
     scaler = StandardScaler()
