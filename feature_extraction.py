@@ -738,7 +738,7 @@ def process_channel(ch_name, raw_psg, category_lookup, subject_id, session_id, h
         category = category_lookup.get(ch_name, "unknown")
 
         if hypnogram is None:
-            res = extract_features(data, fs, ch_name, category, None, None, 0, 0, "None", processed=processed)
+            res = extract_features(data,fs,ch_name,category,subject_id,session_id,"All",0,"None",processed=processed,)
             return [{**res, "stage": "All", "transition_id": 0, "transition_type": "None"}] if res else []
 
         hypnogram_expanded = np.repeat(hypnogram, int(fs * 30))
@@ -1086,8 +1086,8 @@ def stratified_pca_feature_selection(df, y, params):
             X_te = scaler.transform(imputer.transform(best_te_subset))
 
             feature_names= imputer.get_feature_names_out(best_tr_subset.columns)
-            X_tr=pd.DataFrame(X_tr_raw,columns=feature_names)
-            X_te=pd.DataFrame(X_te_raw,columns=feature_names)
+            X_tr=pd.DataFrame(X_tr,columns=feature_names)
+            X_te=pd.DataFrame(X_te,columns=feature_names)
 
             n_samples, n_features = X_tr.shape
             max_possible_components = min(n_samples, n_features)
