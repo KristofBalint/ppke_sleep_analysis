@@ -178,17 +178,18 @@ class DebugMessageCollector:
             self.matrix[checkpoint] = {attr: None for attr in self.ATTRIBUTES}
 
         cp_data = self.matrix[checkpoint]
-
+        
         # Store first failure patient and iteration if not already set
         if cp_data["first_failure_patient"] is None:
             cp_data["first_failure_patient"] = patient_id
             cp_data["first_failure_iteration"] = iteration
-
             if exc is not None:
                 cp_data["traceback"] = traceback.format_exc()
             elif isinstance(message, Exception):
                 cp_data["traceback"] = str(message)
-
+        if cp_data["failure count"] is None:
+            cp_data["failure count"]=0
+        cp_data["failure count"]+=1
         cp_data["last_message"] = str(message)
 
     def flag(self, name, value=True):
