@@ -498,9 +498,9 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
                     row_dict["sw_spindle_delay_mean"] = coupled["SpindleDelay"].mean()
                     row_dict["sw_spindle_delay_std"] = coupled["SpindleDelay"].std()
 
-                    savable = row_dict.copy()
-                    savable = savable.reindex(valid_features["ecg"])
-                    savable.to_csv("backup_ecg.csv", mode="a", header=False, index=False)
+                    #savable = row_dict.copy()
+                    #savable = savable.reindex(valid_features["eeg"])
+                    #savable.to_csv("backup_eeg.csv", mode="a", header=False, index=False)
                 else:
                     row_dict["sw_count"] = 0
                     row_dict["sw_density"] = 0
@@ -532,7 +532,7 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
                 row_dict["sw_spindle_delay_mean"] = 0
                 row_dict["sw_spindle_delay_std"] = 0
 
-            savable = row_dict.copy()
+            savable = pd.DataFrame([row_dict])
             savable = savable.reindex(valid_features["eeg"])
             savable.to_csv("backup_eeg.csv", mode="a", header=False, index=False)
 
@@ -572,7 +572,7 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
             row_dict["sw_spindle_phase_std"] = 0
             row_dict["sw_spindle_delay_mean"] = 0
             row_dict["sw_spindle_delay_std"] = 0
-            savable = row_dict.copy()
+            savable = pd.DataFrame([row_dict])
             savable = savable.reindex(valid_features["eeg"])
             savable.to_csv("backup_eeg.csv", mode="a", header=False, index=False)
 
@@ -630,7 +630,7 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
             row_dict["HF_NORM"] = hrv_biomarker["HF_NORM"]
             row_dict["LF_HF_RATIO"] = hrv_biomarker["LF_HF_RATIO"]
 
-            savable = row_dict.copy()
+            savable = pd.DataFrame([row_dict])
             savable = savable.reindex(valid_features["ecg"])
             savable.to_csv("backup_ecg.csv", mode="a", header=False, index=False)
         except Exception as e:
@@ -660,7 +660,7 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
             row_dict["LF_NORM"] = np.nan
             row_dict["HF_NORM"] = np.nan
             row_dict["LF_HF_RATIO"] = np.nan
-            savable = row_dict.copy()
+            savable = pd.DataFrame([row_dict])
             savable = savable.reindex(valid_features["ecg"])
             savable.to_csv("backup_ecg.csv", mode="a", header=False, index=False)
 
@@ -670,17 +670,18 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
             row_dict["powerline_ratio"] = powerline_ratio(Pxx, f)
             row_dict["hf_ratio_signal"] = high_frequency_ratio(Pxx, f)
             row_dict["spec_peak_min_ratio"] = np.max(Pxx) / (np.min(Pxx) + 1e-12)
-            row_dict["energy_ratio_chunks"] = tsf.energy_ratio_by_chunks(
-                data, param=[{"num_segments": 10, "segment_focus": 5}]
-            )[0][1]
+            row_dict["energy_ratio_chunks"] = tsf.energy_ratio_by_chunks(data, param=[{"num_segments": 10, "segment_focus": 5}] )[0][1]
             row_dict["num_peaks"] = tsf.number_peaks(data, n=3)
-            savable = row_dict.copy()
+            savable = pd.DataFrame([row_dict])
             savable = savable.reindex(valid_features["leg emg"])
             savable.to_csv("backup_emg.csv", mode="a", header=False, index=False)
         except Exception as e:
             feature_debug.update_failure("EMG processed", patient_id=subject_id, message=f"EMG error: {e}", exc=e)
             print(f"EMG extraction error: {e}")
             traceback.print_exc()
+            savable = pd.DataFrame([row_dict])
+            savable = savable.reindex(valid_features["leg emg"])
+            savable.to_csv("backup_emg.csv", mode="a", header=False, index=False)
 
     elif category == "resp":
         feature_debug.update_success("resp processed", patient_id=subject_id, message=f"Channel {ch_name}")
@@ -701,7 +702,7 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
             row_dict["mean_resp_rate"] = mean_rr
             row_dict["resp_variability"] = resp_var
             row_dict["linear_trend"] = tsf.linear_trend(data, param=[{"attr": "slope"}])[0][1]
-            savable = row_dict.copy()
+            savable = pd.DataFrame([row_dict])
             savable = savable.reindex(valid_features["resp"])
             savable.to_csv("backup_resp.csv", mode="a", header=False, index=False)
         except Exception as e:
@@ -711,21 +712,20 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
             row_dict["mean_resp_rate"] = np.nan
             row_dict["resp_variability"] = np.nan
             row_dict["linear_trend"] = np.nan
-            savable = row_dict.copy()
+            savable = pd.DataFrame([row_dict])
             savable = savable.reindex(valid_features["resp"])
             savable.to_csv("backup_resp.csv", mode="a", header=False, index=False)
 
     elif category == "eog":
         feature_debug.update_success("EOG processed", patient_id=subject_id, message=f"Channel {ch_name}")
-        savable = row_dict.copy()
+        savable = pd.DataFrame([row_dict])
         savable = savable.reindex(valid_features["eog"])
         savable.to_csv("backup_eog.csv", mode="a", header=False, index=False)
 
     return row_dict
 
 
-def process_channel(ch_name, raw_psg, category_lookup, subject_id, session_id, hypnogram=None, processed=True,
-                    aggregate=True):
+def process_channel(ch_name, raw_psg, category_lookup, subject_id, session_id, hypnogram=None, processed=True,aggregate=True):
     try:
         data, _ = raw_psg[ch_name]
         data = data.ravel()
@@ -825,8 +825,7 @@ def process_channel(ch_name, raw_psg, category_lookup, subject_id, session_id, h
 
 
 def assess_signal_quality(raw_psg, category_lookup, subject_id, session_id, hypnogram=None, processed=True):
-    feature_debug.update_success("quality assessment started", patient_id=subject_id,
-                                 message="Starting quality assessment")
+    feature_debug.update_success("quality assessment started", patient_id=subject_id,message="Starting quality assessment")
     try:
         category_features = {
             "emg": list(set(valid_features["leg emg"] + valid_features["chin emg"])),
@@ -867,26 +866,28 @@ def assess_signal_quality(raw_psg, category_lookup, subject_id, session_id, hypn
         print(f"Error during parallel channel processing: {e}")
         results = []
 
-    df_list = [r for r in results if isinstance(r, pd.DataFrame) and not r.empty]
+    flattened = []
 
-    if df_list:
-        flattened = pd.concat(df_list, ignore_index=True)
-    else:
-        fallback_rows = []
-        try:
-            master_feature_names = get_master_feature_names(category_lookup)
-        except Exception:
-            master_feature_names = []
-
-        for ch in raw_psg.ch_names:
-            row = {feat: 0.0 for feat in master_feature_names}
-            row["channel"] = ch
-            row["stage"] = "All"
-            row["transition_id"] = 0
-            row["transition_type"] = "None"
-            fallback_rows.append(row)
-
-        flattened = pd.DataFrame(fallback_rows)
+    for r in results:
+        if r is None:
+            continue
+    
+        if isinstance(r, pd.DataFrame):
+            if not r.empty:
+                flattened.extend(
+                    r.to_dict(orient="records")
+                )
+    
+        elif isinstance(r, list):
+            flattened.extend(
+                item for item in r
+                if isinstance(item, dict)
+            )
+    
+        elif isinstance(r, dict):
+            flattened.append(r)
+    
+    flattened = pd.DataFrame(flattened)
 
     if hypnogram is not None and not flattened.empty:
         synchron_pairs = [
@@ -909,9 +910,7 @@ def assess_signal_quality(raw_psg, category_lookup, subject_id, session_id, hypn
             print(f"Error during parallel synchrony processing: {e}")
             sync_results = []
 
-        sync_flattened = [
-            item for sublist in sync_results if sublist for item in sublist
-        ]
+        sync_flattened = [ item for sublist in sync_results if sublist for item in sublist]
 
         if sync_flattened:
             sync_rows = []
