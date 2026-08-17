@@ -98,7 +98,7 @@ class SleepFMConfig:
     maximum_channels_per_modality: Dict[str, int] = field(
         default_factory=lambda: {
             "BAS": 8,
-            "RESP": 6,
+            "RESP": 7,
             "EKG": 2,
             "EMG": 4,
         }
