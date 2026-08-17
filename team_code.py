@@ -29,6 +29,7 @@ from sklearn.model_selection import GroupShuffleSplit
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler 
 import traceback
+from pathlib import Path
 from utils import DebugMessageCollector
 from SleepFMIntegrator import *
 
@@ -259,7 +260,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     # Iterate over the records to extract the features and labels.
     features = list()
     #labels = list()
-    sleepfm_embeddings_array=list()
+    #sleepfm_embeddings_array=list()
 
     category_lookup = get_category_map(DEFAULT_CSV_PATH)
     
@@ -291,9 +292,6 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     sleepfm_rows = []
     labels = []
     
-    
-    category_lookup = get_category_map(DEFAULT_CSV_PATH)
-
     pbar = tqdm(range(num_records), desc="Extracting Features", unit="record", disable=not verbose)
     backup = "backup.csv"
     if os.path.exists(backup):  # If by any accident already exists, removes it
@@ -468,7 +466,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             #--------------------------------------------------------------
             # Extract embeddings, currently non-used, until problems with our code is identified
             #sleepfm_emb = extractor.extract_features(modality_signals)
-            #sleep_fm_embeddings_array.append(sleepfm_emb)
+            #sleepfm_embeddings_array.append(sleepfm_emb)
             # --------------------------------------------------------------
             # if 'physiological_data' in locals(): del physiological_data
             # if 'algorithmic_annotations' in locals(): del algorithmic_annotations
@@ -497,7 +495,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             f"patients={len(full_df)}"
         ),
     )
-    all_bool_cols = [c for c in X.columns if "is_flat" in c or "amp_out_of_bounds" in c]
+    all_bool_cols = [c for c in full_df.columns if "is_flat" in c or "amp_out_of_bounds" in c]
     for col in all_bool_cols:
         full_df[col] = full_df[col].astype("bool")
     team_debug.update_success(
@@ -579,7 +577,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     
     if np.isnan(handcrafted_matrix).any():
         error_message="NaNs remain after final handcrafted preprocessing." +team_debug.summary()
-        raise RuntimeError( )
+        raise RuntimeError( error_message)
 
     if not np.isfinite(handcrafted_matrix).all():
         error_message="Non-finite handcrafted values remain."+team_debug.summary()
