@@ -48,6 +48,34 @@ DEFAULT_CSV_PATH = os.path.join(SCRIPT_DIR, 'channel_table.csv')
 checkpoint_path = Path(SCRIPT_DIR) / "SleepFM" / "checkpoints" / "model_diagnosis" / "best.pth"
 HYBRID_MODEL_FILENAME = "hybrid_model.pt"
 HYBRID_METADATA_FILENAME = "hybrid_metadata.sav"
+XGB_MODEL_FILENAME = "xgb_model.sav"
+XGB_METADATA_FILENAME = "xgb_metadata.sav"
+
+# Pipeline switches
+# 1 = Handcrafted feature extraction -> XGBoost (no stratified PCA/RFE ranking)
+# 2 = Handcrafted feature extraction -> stratified PCA/RFE selection -> XGBoost
+# 3 = Full handcrafted + stratified selection + SleepFM hybrid pipeline
+PIPELINE_MODE = 3
+
+# Used only by PIPELINE_MODE == 1. Valid examples:
+FEATURE_CATEGORY = None
+# When FEATURE_CATEGORY is set, retain demographics and CAISR annotation features too.
+INCLUDE_PATIENT_LEVEL_FEATURES_WITH_CATEGORY = True
+
+PIPELINE_NAMES = {
+    1: "handcrafted_xgboost",
+    2: "stratified_xgboost",
+    3: "handcrafted_sleepfm_hybrid",
+}
+
+PATIENT_LEVEL_FEATURE_COLUMNS = [
+    "Age", "Sex_Female", "Sex_Male",
+    "Race_Asian", "Race_Black", "Race_Others", "Race_Unavailable", "Race_White",
+    "BMI",
+    "Ahi_auto", "Ar_auto", "Limb_auto",
+    "W_pct", "N1_pct", "N2_pct", "N3_pct", "R_pct", "efficiency",
+    "W_prob", "N3_prob", "Ar_prob",
+]
 
 SLEEPFM_MODALITY_MAP = {
     "eeg": "BAS",
@@ -59,10 +87,8 @@ SLEEPFM_MODALITY_MAP = {
     "emg": "EMG",
 }
 config = SleepFMConfig(checkpoint_path=checkpoint_path)
-extractor = FeatureExtractorStrategy(config)
 
 #helper functions
-
 
 def add_patient_level_features(physiological_features,demographic_features,algorithmic_features,label=None,):
     feat_df = physiological_features.copy()
@@ -103,34 +129,25 @@ def add_patient_level_features(physiological_features,demographic_features,algor
 def choose_feature_subset(full_df,ranked_features,params,):
     groups = full_df["subject"].astype(str)
     y = full_df["Cognitive_Impairment"].astype(int)
-
     splitter = GroupShuffleSplit(n_splits=1,test_size=0.2,random_state=42,)
-
+    
     train_idx, val_idx = next(splitter.split(full_df, y, groups))
-
     percentages = list(range(50, 4, -5))
 
     best_auc = -np.inf
     best_features = None
 
     for percentage in percentages:
-
         n_keep = max(1,int(len(ranked_features) * percentage / 100))
-
         selected = list(ranked_features[:n_keep])
-
         # Remove anything that somehow disappeared.
         selected = [f for f in selected if f in full_df.columns]
-
         if not selected:
             continue
-
         X_train = full_df.iloc[train_idx][selected]
         X_val = full_df.iloc[val_idx][selected]
-
         y_train = y.iloc[train_idx]
         y_val = y.iloc[val_idx]
-
         selector_model = XGBClassifier(
             **params,
             tree_method="hist",
@@ -141,11 +158,8 @@ def choose_feature_subset(full_df,ranked_features,params,):
         )
 
         selector_model.fit(X_train,y_train,)
-
         probs = selector_model.predict_proba(X_val)[:, 1]
-
         auc = metrics.roc_auc_score(y_val,probs,)
-
         if auc > best_auc:
             best_auc = auc
             best_features = selected
@@ -171,19 +185,13 @@ def build_sleepfm_modalities(physiological_data,physiological_fs,category_lookup
             "EKG":  {...},
             "EMG":  {...},
         }
-
     modality_fs
         Same hierarchy, containing channel sampling frequencies.
     """
 
     rename_rules = load_rename_rules(os.path.abspath(csv_path))
-
     original_labels = list(physiological_data.keys())
-
-    rename_map, cols_to_drop = standardize_channel_names_rename_only(
-        original_labels,
-        rename_rules,
-    )
+    rename_map, cols_to_drop = standardize_channel_names_rename_only(original_labels, rename_rules,)
 
     modality_signals = {
         "BAS": {},
@@ -200,34 +208,129 @@ def build_sleepfm_modalities(physiological_data,physiological_fs,category_lookup
     }
 
     for old_name, signal in physiological_data.items():
-
         if old_name in cols_to_drop:
             continue
 
-        standard_name = rename_map.get(
-            old_name,
-            old_name.lower(),
-        )
-
+        standard_name = rename_map.get(old_name,old_name.lower(), )
         category = category_lookup.get(standard_name)
 
         if category is None:
             continue
 
-        sleepfm_modality = SLEEPFM_MODALITY_MAP.get(
-            str(category).lower()
-        )
-
+        sleepfm_modality = SLEEPFM_MODALITY_MAP.get(str(category).lower())
         if sleepfm_modality is None:
             continue
 
         modality_signals[sleepfm_modality][standard_name] = signal
-
-        modality_fs[sleepfm_modality][standard_name] = (
-            physiological_fs.get(old_name, 200.0)
-        )
+        modality_fs[sleepfm_modality][standard_name] = (physiological_fs.get(old_name, 200.0))
 
     return modality_signals, modality_fs
+
+def validate_pipeline_configuration():
+    if PIPELINE_MODE not in PIPELINE_NAMES:
+        raise ValueError( f"PIPELINE_MODE must be one of {sorted(PIPELINE_NAMES)}, got {PIPELINE_MODE}. Debug messages: {team_debug.summary()}")
+    if PIPELINE_MODE != 1 and FEATURE_CATEGORY is not None:
+        print(
+            f"Warning: FEATURE_CATEGORY={FEATURE_CATEGORY!r} is ignored in "
+            f"PIPELINE_MODE={PIPELINE_MODE}."
+        )
+
+
+def get_xgb_params():
+    """Single source of truth for the XGBoost hyperparameters."""
+    return {
+        'max_depth': 7,
+        'learning_rate': 0.030842680992267595,
+        'n_estimators': 963,
+        'subsample': 0.668562285184131,
+        'colsample_bytree': 0.6664590708996059,
+        'gamma': 1.0645185377275237,
+        'min_child_weight': 16,
+        'reg_alpha': 0.0600354240141498,
+        'reg_lambda': 35.771321493090454,
+    }
+
+
+def get_available_handcrafted_features(full_df, category=None, include_patient_level=True):
+    """
+    Return usable handcrafted columns from the patient-level dataframe.
+
+    If category is None, all physiological + patient-level features are used.
+    If category is set, only physiological columns beginning with that category
+    are retained, optionally together with demographics/CAISR features.
+    """
+    excluded = {"Cognitive_Impairment", "subject", "session"}
+    all_features = [c for c in full_df.columns if c not in excluded]
+
+    if category is None:
+        selected = all_features
+    else:
+        category = str(category).strip().lower()
+        if category == "emg":
+            physiological = [c for c in all_featuresif c.lower().startswith("leg emg-") or c.lower().startswith("chin emg-")]
+        else:
+            prefix = category + "-"
+            physiological = [c for c in all_features if c.lower().startswith(prefix)]
+
+        selected = physiological
+        if include_patient_level:
+            selected += [c for c in PATIENT_LEVEL_FEATURE_COLUMNS if c in full_df.columns]
+
+    # Preserve dataframe column order and remove duplicate names.
+    wanted = set(selected)
+    selected = [c for c in full_df.columns if c in wanted and c not in excluded]
+    # Empty/all-NaN columns provide no information and can upset downstream preprocessing.
+    selected = [c for c in selected if full_df[c].notna().any()]
+
+    if not selected:
+        raise RuntimeError(f"No handcrafted features available for category={category!r}.")
+    return selected
+
+
+def fit_xgboost_pipeline(full_df, labels, selected_features, params):
+    """Fit an imputer + XGBoost model for modes 1 and 2."""
+    X = full_df[selected_features].copy()
+    y = np.asarray(labels, dtype=np.int64)
+
+    # Convert bools explicitly so train and inference representations are stable.
+    for col in X.columns:
+        if X[col].dtype == bool:
+            X[col] = X[col].astype(np.int8)
+
+    imputer = SimpleImputer(strategy="median", keep_empty_features=True)
+    X_imputed = imputer.fit_transform(X)
+
+    model = XGBClassifier(
+        **params,
+        tree_method="hist",
+        objective="binary:logistic",
+        eval_metric="auc",
+        random_state=42,
+    )
+    model.fit(X_imputed, y)
+    return model, imputer
+
+
+def save_xgb_model(model_folder, model, selected_features, imputer,pipeline_mode, feature_category):
+    os.makedirs(model_folder, exist_ok=True)
+    # Prevent load_model() from seeing stale artifacts from another mode.
+    for stale_name in (HYBRID_MODEL_FILENAME, HYBRID_METADATA_FILENAME):
+        stale_path = os.path.join(model_folder, stale_name)
+        if os.path.exists(stale_path):
+            os.remove(stale_path)
+    joblib.dump(model, os.path.join(model_folder, XGB_MODEL_FILENAME), protocol=0)
+    metadata = {
+        "model_type": "XGBClassifier",
+        "pipeline_mode": int(pipeline_mode),
+        "pipeline_name": PIPELINE_NAMES[int(pipeline_mode)],
+        "feature_category": feature_category,
+        "include_patient_level_features_with_category": INCLUDE_PATIENT_LEVEL_FEATURES_WITH_CATEGORY,
+        "selected_features": list(selected_features),
+        "imputer": imputer,
+        "threshold": 0.5,
+    }
+    joblib.dump(metadata, os.path.join(model_folder, XGB_METADATA_FILENAME), protocol=0)
+
 
 ################################################################################
 #
@@ -240,137 +343,128 @@ def build_sleepfm_modalities(physiological_data,physiological_fs,category_lookup
 
 # Train your model.
 def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
-    # Find the data files.
-    team_debug.update_success("entered", message="train_model execution started")
+    validate_pipeline_configuration()
+    pipeline_name = PIPELINE_NAMES[PIPELINE_MODE]
+    team_debug.update_success(
+        "entered",
+        message=(
+            f"train_model execution started; mode={PIPELINE_MODE} "
+            f"({pipeline_name}); category={FEATURE_CATEGORY}"
+        ),
+    )
+
     if verbose:
+        print(f"Pipeline mode {PIPELINE_MODE}: {pipeline_name}")
+        if PIPELINE_MODE == 1:
+            print(f"Feature category: {FEATURE_CATEGORY or 'all'}")
         print('Finding the Challenge data...')
 
     patient_data_file = os.path.join(data_folder, DEMOGRAPHICS_FILE)
     patient_metadata_list = find_patients(patient_data_file)
     num_records = len(patient_metadata_list)
-    team_debug.update_success("patients found",message=f"num_records={num_records}")
-
+    team_debug.update_success("patients found", message=f"num_records={num_records}")
     if num_records == 0:
         raise FileNotFoundError('No data were provided.')
 
-    # Extract the features and labels from the data.
+    category_lookup = get_category_map(csv_path)
+    handcrafted_rows = []
+    labels = []
+    sleepfm_rows = []
+
+    # SleepFM exists only in the full hybrid pipeline.
+    config = None
+    sleepfm_encoder = None
+    sleepfm_preprocessor = None
+    if PIPELINE_MODE == 3:
+        try:
+            config = SleepFMConfig(
+                checkpoint_path=checkpoint_path,
+                freeze_backbone=True,
+                debug=False,
+                verbose=verbose,
+            )
+            # SleepFMEncoder currently checks config.load_pretrained although
+            # SleepFMConfig does not declare that field. load_sleepfm() performs
+            # checkpoint loading itself, so keep constructor-side loading off.
+            setattr(config, "load_pretrained", False)
+            sleepfm_encoder = load_sleepfm(config)
+            sleepfm_preprocessor = SleepFMPreprocessor(config)
+            team_debug.update_success(
+                "sleepfm initialized",
+                message=(
+                    f"checkpoint={checkpoint_path}; device={config.device}; "
+                    f"embedding_dim={config.embedding_dimension}"
+                ),
+            )
+        except Exception as e:
+            team_debug.update_failure("sleepfm initialized", message=str(e), exc=e)
+            raise RuntimeError(
+                "SleepFM initialization failed.\n" + team_debug.summary()
+            ) from e
+
     if verbose:
         print('Extracting features and labels from the data...')
 
-    # Iterate over the records to extract the features and labels.
-    features = list()
-    #labels = list()
-    #sleepfm_embeddings_array=list()
-
-    category_lookup = get_category_map(DEFAULT_CSV_PATH)
-    
-    try:
-        config = SleepFMConfig(checkpoint_path=checkpoint_path,freeze_backbone=True,debug=False,verbose=verbose,)
-    
-        sleepfm_encoder = load_sleepfm(config)
-        sleepfm_preprocessor = SleepFMPreprocessor(config)
-    
-        team_debug.update_success(
-            "sleepfm initialized",
-            message=(
-                f"checkpoint={checkpoint_path}; "
-                f"device={config.device}; "
-                f"embedding_dim={config.embedding_dimension}"
-            ),
-        )
-    
-    except Exception as e:
-        team_debug.update_failure(
-            "sleepfm initialized",
-            message=str(e),
-            exc=e,
-        )
-    
-        raise RuntimeError("SleepFM initialization failed.\n"+ team_debug.summary()) from e
-    
-    handcrafted_rows = []
-    sleepfm_rows = []
-    labels = []
-    
-    pbar = tqdm(range(num_records), desc="Extracting Features", unit="record", disable=not verbose)
+    pbar = tqdm(
+        range(num_records),
+        desc="Extracting Features",
+        unit="record",
+        disable=not verbose,
+    )
     backup = "backup.csv"
-    if os.path.exists(backup):  # If by any accident already exists, removes it
+    if os.path.exists(backup):
         os.remove(backup)
     header_written = False
+
     for i in pbar:
+        patient_id = "Unknown"
         try:
             team_debug.update_success("start", iteration=i)
-            # Extract identifiers for this specific record
             record = patient_metadata_list[i]
             patient_id = record[HEADERS['bids_folder']]
             site_id = record[HEADERS['site_id']]
             session_id = record[HEADERS['session_id']]
-            team_debug.update_success("patient started",patient_id=patient_id,iteration=i,message=f"site={site_id}; session={session_id}")
-
+            team_debug.update_success( "patient started", patient_id=patient_id, iteration=i, message=f"site={site_id}; session={session_id}")
             if verbose:
                 pbar.set_postfix({"patient": patient_id})
 
-            # Load the patient data.
-            patient_data_file = os.path.join(data_folder, DEMOGRAPHICS_FILE)
+            # Demographics.
             patient_data = load_demographics(patient_data_file, patient_id, session_id)
-            team_debug.update_success("patient found", patient_id=patient_id, iteration=i)
             demographic_features = extract_demographic_features(patient_data)
-            team_debug.update_success("demographics loaded", patient_id=patient_id, iteration=i)
+            team_debug.update_success("demographics loaded", patient_id=patient_id, iteration=i )
 
-            # Load the algorithmic annotations. It needs to be loaded before extracting phyisiological features in our code, as our code requires the hypnogram from the algorithmic annotations
-            algorithmic_annotations_file = os.path.join(data_folder,
-                                                        ALGORITHMIC_ANNOTATIONS_SUBFOLDER,
-                                                        site_id,
-                                                        f"{patient_id}_ses-{session_id}_caisr_annotations.edf")
-            algorithmic_annotations, algorithmic_fs = load_signal_data(algorithmic_annotations_file)
+            # Algorithmic annotations / hypnogram.
+            algorithmic_annotations_file = os.path.join( data_folder, ALGORITHMIC_ANNOTATIONS_SUBFOLDER, site_id,
+                                                        f"{patient_id}_ses-{session_id}_caisr_annotations.edf",)
+            algorithmic_annotations, _ = load_signal_data(algorithmic_annotations_file)
             algorithmic_features = extract_algorithmic_annotations_features(algorithmic_annotations)
-            team_debug.update_success("algorithmic annotations loaded", patient_id=patient_id, iteration=i)
-
-            # Load the physiological signal.
-            physiological_data_file = os.path.join(data_folder,
-                                                   PHYSIOLOGICAL_DATA_SUBFOLDER,
-                                                   site_id,
-                                                   f"{patient_id}_ses-{session_id}.edf")
-            # --- Check if the file actually exists before proceeding ---
-            if not os.path.exists(physiological_data_file):
-                if verbose:
-                    print(f"  ! Missing physiological data for {patient_id}. Skipping...")
-                continue  # skip record
-
-            # Load physiological data
-            physiological_data, physiological_fs = load_signal_data(
-                physiological_data_file)
-            team_debug.update_success("physiological loaded", patient_id=patient_id, iteration=i)
-            hypno = None
             if "stage_caisr" in algorithmic_annotations:
-                hypno = algorithmic_annotations["stage_caisr"]
-                # print(f"Hypnogram length before processing{len(hypno)}")
-                hypno = np.round(hypno.flatten()).astype(int)
-                team_debug.update_success(
-                    "hypnogram processed",
-                    patient_id=patient_id,
-                    iteration=i,
-                    message=(
-                        f"available={hypno is not None}; "
-                        f"length={len(hypno) if hypno is not None else 0}"
-                    ),
-                )
+                hypno = np.round(algorithmic_annotations["stage_caisr"].flatten()).astype(int)
             else:
                 hypno = None
-                team_debug.update_failure(
-                    "hypnogram processed",
-                    patient_id=patient_id,
-                    iteration=i,
-                    message=(
-                        f"available={hypno is not None}; "
-                        f"length={len(hypno) if hypno is not None else 0}"
-                    ),
-                )
+            team_debug.update_success(
+                "algorithmic annotations loaded",patient_id=patient_id,iteration=i,
+                message=f"hypnogram_length={0 if hypno is None else len(hypno)}",
+            )
+
+            # Physiological signals.
+            physiological_data_file = os.path.join(data_folder,PHYSIOLOGICAL_DATA_SUBFOLDER,site_id,f"{patient_id}_ses-{session_id}.edf" )
+            if not os.path.exists(physiological_data_file):
+                if verbose:
+                    tqdm.write( f"  ! Missing physiological data for {patient_id}. Skipping...")
+                continue
+
+            physiological_data, physiological_fs = load_signal_data(physiological_data_file)
             physiological_features = extract_physiological_features(
-                physiological_data, physiological_fs,
-                csv_path=csv_path, category_lookup=category_lookup,
-                hypnogram=hypno, patient_id=patient_id,
-                session_id=session_id)  # This function can rename, re-reference, resample, etc. the signal data.
+                physiological_data,
+                physiological_fs,
+                csv_path=csv_path,
+                category_lookup=category_lookup,
+                hypnogram=hypno,
+                patient_id=patient_id,
+                session_id=session_id,
+                category_filter=(FEATURE_CATEGORY if PIPELINE_MODE == 1 else None),
+            )
             team_debug.update_success(
                 "feature extraction returned",
                 patient_id=patient_id,
@@ -380,102 +474,61 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                     f"non_nan={int(physiological_features.notna().sum().sum())}"
                 ),
             )
-            pd.DataFrame({"patient": [patient_id]}).to_csv(backup, mode="a", header=not header_written, index=False)
-            header_written = True
-            team_debug.update_success("backup written", patient_id=patient_id, iteration=i)
-            # Load the human annotations; these data will not be available in the hidden validation and test sets.
-            human_annotations_file = os.path.join(data_folder,
-                                                  HUMAN_ANNOTATIONS_SUBFOLDER,
-                                                  site_id,
-                                                  f"{patient_id}_ses-{session_id}_expert_annotations.edf")
-            human_annotations, human_fs = load_signal_data(
-                human_annotations_file)
-            human_features = extract_human_annotations_features(
-                human_annotations)
 
-            # Load the diagnoses; these data will not be available in the hidden validation and test sets.
-            diagnosis_file = os.path.join(data_folder, DEMOGRAPHICS_FILE)
-            label = load_diagnoses(diagnosis_file, patient_id)
-            team_debug.update_success("diagnosis loaded", patient_id=patient_id, iteration=i)
-
-            # Store the features and labels, but
-            # the human annotations are not available on the hidden validation and test sets, but you
-            # may want to consider how to use them for training.
-            print("CONTENT AND TYPE OF LABEL")
-            print(label)
-            print(type(label))
+            # Label is required for every training branch.
+            label = load_diagnoses(patient_data_file, patient_id)
             try:
-                label=int(label)
-            except (TypeError,ValueError):
+                label = int(label)
+            except (TypeError, ValueError):
                 continue
-            if label not in (0,1):
+            if label not in (0, 1):
                 continue
-            feat_df = add_patient_level_features(physiological_features,demographic_features,algorithmic_features,label=label,)
-            team_debug.update_success(
-                "patient feature row created",
-                patient_id=patient_id,
-                iteration=i,
-                message=(
-                    f"shape={feat_df.shape}; "
-                    f"label={label}"
-                ),
-            )
+
+            feat_df = add_patient_level_features( physiological_features,demographic_features,algorithmic_features, label=label,)
             if len(feat_df) != 1:
-                raise RuntimeError(
-                    f"Expected one handcrafted row for "
-                    f"{patient_id}, got {len(feat_df)}."
+                raise RuntimeError(f"Expected one handcrafted row for {patient_id}, got {len(feat_df)}. Debug messages: {team_debug.summary()}")
+
+            # Mode 3 alone computes SleepFM embeddings. This is deliberately
+            # before appending the handcrafted row so the arrays stay aligned
+            # if SleepFM fails for a patient.
+            sleepfm_embedding = None
+            if PIPELINE_MODE == 3:
+                modality_signals, modality_fs = build_sleepfm_modalities(
+                    physiological_data,
+                    physiological_fs,
+                    category_lookup,
+                    csv_path=csv_path,
                 )
-            modality_signals, modality_fs = (build_sleepfm_modalities( physiological_data, physiological_fs, category_lookup, csv_path=csv_path, ))
-            modality_counts = {
-                modality: len(channels)
-                for modality, channels
-                in modality_signals.items()
-            }
-            
-            team_debug.update_success(
-                "sleepfm modalities built",
-                patient_id=patient_id,
-                iteration=i,
-                message=f"channels={modality_counts}",
-            )
-            sleepfm_embedding = (extract_sleepfm_patient_embedding( sleepfm_encoder, sleepfm_preprocessor, modality_signals, modality_fs, ))
-            team_debug.update_success(
-                "sleepfm preprocessing started",
-                patient_id=patient_id,
-                iteration=i,
-                message="Calling SleepFM preprocessing/encoder",
-            )
-            if sleepfm_embedding.shape != (config.embedding_dimension,):
-                team_debug.update_failure("sleepfm preprocessing started",patient_id=patient_id,iteration=i,
-                                          message=f"calculated shape {sleepfm_embedding.shape} compared to configuration shape {config.embedding_dimension}")
-                error_mes=( f"SleepFM embedding shape mismatch " + team_debug.summary())
-                raise RuntimeError(error_mes)
-            handcrafted_rows.append( feat_df )
-            sleepfm_rows.append( sleepfm_embedding )
-            labels.append( label )
+                modality_counts = {modality: len(channels)for modality, channels in modality_signals.items()}
+                team_debug.update_success("sleepfm modalities built", patient_id=patient_id,iteration=i, message=f"channels={modality_counts}", )
+                sleepfm_embedding = extract_sleepfm_patient_embedding(sleepfm_encoder,sleepfm_preprocessor, modality_signals,modality_fs)
+                if sleepfm_embedding.shape != (config.embedding_dimension,):
+                    raise RuntimeError(
+                        "SleepFM embedding shape mismatch: "
+                        f"got {sleepfm_embedding.shape}, expected "
+                        f"({config.embedding_dimension},)."
+                    )
+
+            handcrafted_rows.append(feat_df)
+            labels.append(label)
+            if PIPELINE_MODE == 3:
+                sleepfm_rows.append(sleepfm_embedding)
+
+            pd.DataFrame({"patient": [patient_id]}).to_csv( backup, mode="a", header=not header_written, index=False)
+            header_written = True
             team_debug.update_success(
                 "patient appended",
                 patient_id=patient_id,
                 iteration=i,
                 message=(
-                    f"HC={len(handcrafted_rows)}; "
-                    f"SleepFM={len(sleepfm_rows)}; "
-                    f"labels={len(labels)}"
+                    f"HC={len(handcrafted_rows)}; labels={len(labels)}; "
+                    f"SleepFM={len(sleepfm_rows)}"
                 ),
             )
-            #--------------------------------------------------------------
-            # Extract embeddings, currently non-used, until problems with our code is identified
-            #sleepfm_emb = extractor.extract_features(modality_signals)
-            #sleepfm_embeddings_array.append(sleepfm_emb)
-            # --------------------------------------------------------------
-            # if 'physiological_data' in locals(): del physiological_data
-            # if 'algorithmic_annotations' in locals(): del algorithmic_annotations
 
         except Exception as e:
-        # If an error occurs (e.g., a record is corrupted), log it and move to the next
             error_stack = traceback.format_exc()
-            team_debug.update_failure("start", patient_id=patient_id if 'patient_id' in locals() else "Unknown", iteration=i,
-                                  message=str(e), exc=e)
+            team_debug.update_failure("start",patient_id=patient_id, iteration=i,message=str(e), exc=e,)
             tqdm.write(f"  !!! Error processing record {i + 1} ({patient_id}): {e}")
             tqdm.write(error_stack)
             continue
@@ -483,131 +536,106 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     pbar.close()
 
     if not handcrafted_rows:
-        error_message=(f"No patients produced complete hybrid data."
-                      f"\n--- COLLECTOR DEBUG SUMMARY ---\n{team_debug.summary()}")
-        raise RuntimeError( error_message )
-    
-    full_df = pd.concat( handcrafted_rows, ignore_index=True, )
-    team_debug.update_success(
-        "full dataframe created",
-        message=(
-            f"shape={full_df.shape}; "
-            f"patients={len(full_df)}"
-        ),
-    )
+        raise RuntimeError(
+            "No patients produced usable handcrafted data."
+            f"\n--- COLLECTOR DEBUG SUMMARY ---\n{team_debug.summary()}"
+        )
+
+    full_df = pd.concat(handcrafted_rows, ignore_index=True)
+    y = np.asarray(labels, dtype=np.int64)
+    if len(full_df) != len(y):
+        raise RuntimeError( f"Patient alignment failed: HC={len(full_df)}, labels={len(y)}, debug messages: {team_debug.summary()}" )
+
+    # Existing PCA code explicitly needs these columns to be bool.
     all_bool_cols = [c for c in full_df.columns if "is_flat" in c or "amp_out_of_bounds" in c]
     for col in all_bool_cols:
-        full_df[col] = full_df[col].astype("bool")
-    team_debug.update_success(
-        "boolean conversion complete",
-        message=f"converted_columns={len(all_bool_cols)}",
-    )
-    sleepfm_matrix = np.stack( sleepfm_rows, axis=0, ).astype(np.float32)
-    team_debug.update_success(
-        "sleepfm matrix created",
-        message=(
-            f"shape={sleepfm_matrix.shape}; "
-            f"finite={bool(np.isfinite(sleepfm_matrix).all())}"
-        ),
-    )
-    y = np.asarray( labels, dtype=np.int64, )
+        full_df[col] = full_df[col].astype(bool)
 
-    if not ( len(full_df) == len(sleepfm_matrix) == len(y) ):
-        raise RuntimeError(
-            "Hybrid patient alignment failed: "
-            f"HC={len(full_df)}, "
-            f"SleepFM={len(sleepfm_matrix)}, "
-            f"labels={len(y)}"
-            f"debug messages: {team_debug.summary()}"
-        )
-    team_debug.update_success(
-        "alignment verified",
-        message=(
-            f"HC={len(full_df)}; "
-            f"SleepFM={len(sleepfm_matrix)}; "
-            f"labels={len(y)}"
-        ),
-    )
+    params = get_xgb_params()
+
     
-    params = {'max_depth': 7, 'learning_rate': 0.030842680992267595, 'n_estimators': 963, 'subsample': 0.668562285184131, 'colsample_bytree': 0.6664590708996059, 
-              'gamma': 1.0645185377275237, 'min_child_weight': 16, 'reg_alpha': 0.0600354240141498, 'reg_lambda': 35.771321493090454}
+    # MODE 1: feature extraction -> XGBoost, no stratified PCA/RFE.
+    if PIPELINE_MODE == 1:
+        selected_features = get_available_handcrafted_features( full_df,category=FEATURE_CATEGORY,include_patient_level=INCLUDE_PATIENT_LEVEL_FEATURES_WITH_CATEGORY )
+        team_debug.update_success(
+            "mode 1 features selected",
+            message=(
+                f"category={FEATURE_CATEGORY}; "
+                f"selected_features={len(selected_features)}"
+            ),
+        )
+        model, imputer = fit_xgboost_pipeline( full_df, y, selected_features, params)
+        save_xgb_model( model_folder, model,selected_features, imputer,pipeline_mode=1,feature_category=FEATURE_CATEGORY, )
+        if verbose:
+            print(
+                f"Mode 1 training complete: {len(selected_features)} features, "
+                f"category={FEATURE_CATEGORY or 'all'}."
+            )
+        return
+
+    # Modes 2 and 3 share the existing stratified PCA/RFE ranking + subset step.
     team_debug.update_success(
         "feature selection started",
-        message=(
-            f"input_shape={full_df.shape}; "
-            f"labels={len(y)}"
-        ),
+        message=f"input_shape={full_df.shape}; labels={len(y)}",
     )
-    ranked_features = (stratified_pca_feature_selection( full_df, pd.Series(y), params, ) )
-    team_debug.update_success(
-        "feature ranking returned",
-        message=f"ranked_features={len(ranked_features)}",
-    )
-    selected_features = choose_feature_subset( full_df, ranked_features, params, )
-    team_debug.update_success(
-        "feature subset selected",
-        message=f"selected_features={len(selected_features)}",
-    )
-    selected_features = [ feature for feature in selected_features if full_df[feature].notna().any() ]
+    ranked_features = stratified_pca_feature_selection( full_df, pd.Series(y), params)
+    selected_features = choose_feature_subset( full_df, ranked_features, params)
+    selected_features = [ feature for feature in selected_features if feature in full_df.columns and full_df[feature].notna().any()]
     if not selected_features:
-        error_message=(f"No selected handcrafted features remain."
-                      f"\n--- COLLECTOR DEBUG SUMMARY ---\n{team_debug.summary()}")
-        raise RuntimeError(error_message)
-        
-    handcrafted_raw = full_df[selected_features ].to_numpy()
-    
-    imputer = SimpleImputer( strategy="median", keep_empty_features=True, )
+        raise RuntimeError(
+            "No selected handcrafted features remain."
+            f"\n--- COLLECTOR DEBUG SUMMARY ---\n{team_debug.summary()}"
+        )
+
+    # MODE 2: stratified PCA/RFE selection -> XGBoost.
+    if PIPELINE_MODE == 2:
+        model, imputer = fit_xgboost_pipeline( full_df, y, selected_features, params )
+        save_xgb_model(
+            model_folder,
+            model,
+            selected_features,
+            imputer,
+            pipeline_mode=2,
+            feature_category=None,
+        )
+        if verbose:
+            print( f"Mode 2 training complete: {len(selected_features)} selected features.")
+        return
+
+    # MODE 3: selected handcrafted features + SleepFM hybrid.
+    sleepfm_matrix = np.stack(sleepfm_rows, axis=0).astype(np.float32)
+    if not (len(full_df) == len(sleepfm_matrix) == len(y)):
+        raise RuntimeError(
+            "Hybrid patient alignment failed: "
+            f"HC={len(full_df)}, SleepFM={len(sleepfm_matrix)}, labels={len(y)}"
+        )
+
+    handcrafted_raw = full_df[selected_features].to_numpy()
+    imputer = SimpleImputer(strategy="median", keep_empty_features=True)
     scaler = StandardScaler()
-    handcrafted_imputed = imputer.fit_transform( handcrafted_raw )
-    team_debug.update_success(
-        "final imputation complete",
-        message=(
-            f"shape={handcrafted_imputed.shape}; "
-            f"nan_count={int(np.isnan(handcrafted_imputed).sum())}"
-        ),
-    )
-    handcrafted_matrix = scaler.fit_transform( handcrafted_imputed ).astype(np.float32)
-    team_debug.update_success(
-    "final scaling complete",
-        message=(
-            f"shape={handcrafted_matrix.shape}; "
-            f"finite={bool(np.isfinite(handcrafted_matrix).all())}"
-        ),
-    )
-    
-    if np.isnan(handcrafted_matrix).any():
-        error_message="NaNs remain after final handcrafted preprocessing." +team_debug.summary()
-        raise RuntimeError( error_message)
+    handcrafted_imputed = imputer.fit_transform(handcrafted_raw)
+    handcrafted_matrix = scaler.fit_transform( handcrafted_imputed).astype(np.float32)
 
     if not np.isfinite(handcrafted_matrix).all():
-        error_message="Non-finite handcrafted values remain."+team_debug.summary()
-        raise RuntimeError( error_message )
-        
-    model = HybridStrategy( config=config, handcrafted_dim=handcrafted_matrix.shape[1], num_classes=1, )
-    
-    # Replace HybridStrategy's newly initialized encoder
-    # with the exact pretrained encoder used to generate sleepfm_matrix.
+        raise RuntimeError(
+            "Non-finite handcrafted values remain after final preprocessing."
+        )
+
+    model = HybridStrategy(
+        config=config,
+        handcrafted_dim=handcrafted_matrix.shape[1],
+        num_classes=1,
+    )
     model.backbone = sleepfm_encoder
-    
     freeze_backbone(model.backbone)
-    team_debug.update_success(
-        "hybrid model created",
-        message=(
-            f"handcrafted_dim={handcrafted_matrix.shape[1]}; "
-            f"sleepfm_dim={config.embedding_dimension}"
-        ),
+    model = train_hybrid_head(
+        model,
+        handcrafted_matrix,
+        sleepfm_matrix,
+        y,
+        config,
     )
-    team_debug.update_success(
-        "hybrid training started",
-        message=f"patients={len(y)}",
-    )
-    model = train_hybrid_head( model,handcrafted_matrix,sleepfm_matrix,y,config, )
-    team_debug.update_success(
-        "hybrid training complete",
-        message="Hybrid fusion head training returned successfully",
-    )
-    os.makedirs( model_folder, exist_ok=True, )
-    
+
     save_model(
         model_folder=model_folder,
         model=model,
@@ -615,51 +643,69 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
         handcrafted_imputer=imputer,
         handcrafted_scaler=scaler,
         config=config,
+        pipeline_mode=3,
     )
-    team_debug.update_success(
-        "model saved",
-        message=f"model_folder={model_folder}",
-    )
-
     if verbose:
-        print("Hybrid training complete.")
+        print("Mode 3 hybrid training complete.")
 
 
 # Load your trained models. This function is *required*. You should edit this function to add your code, but do *not* change the
 # arguments of this function. If you do not train one of the models, then you can return None for the model.
-def load_model(model_folder,verbose,):
-    model_path = os.path.join(model_folder,HYBRID_MODEL_FILENAME,)
+def load_model(model_folder, verbose):
+    """Load whichever model type was saved during training."""
+    xgb_metadata_path = os.path.join(model_folder, XGB_METADATA_FILENAME)
+    hybrid_metadata_path = os.path.join(model_folder, HYBRID_METADATA_FILENAME)
 
-    metadata_path = os.path.join( model_folder, HYBRID_METADATA_FILENAME, )
+    if os.path.exists(xgb_metadata_path):
+        metadata = joblib.load(xgb_metadata_path)
+        model_path = os.path.join(model_folder, XGB_MODEL_FILENAME)
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(model_path)
+        xgb_model = joblib.load(model_path)
+        return {
+            "model_type": "xgboost",
+            "pipeline_mode": metadata["pipeline_mode"],
+            "pipeline_name": metadata["pipeline_name"],
+            "feature_category": metadata.get("feature_category"),
+            "model": xgb_model,
+            "selected_features": metadata["selected_features"],
+            "imputer": metadata["imputer"],
+            "threshold": metadata["threshold"],
+        }
 
+    if not os.path.exists(hybrid_metadata_path):
+        raise FileNotFoundError(
+            f"Neither {XGB_METADATA_FILENAME} nor {HYBRID_METADATA_FILENAME} "
+            f"was found in {model_folder}."
+        )
+
+    model_path = os.path.join(model_folder, HYBRID_MODEL_FILENAME)
     if not os.path.exists(model_path):
         raise FileNotFoundError(model_path)
 
-    if not os.path.exists(metadata_path):
-        raise FileNotFoundError(metadata_path)
-
-    metadata = joblib.load( metadata_path )
-    config_dict = metadata[ "sleepfm_config" ]
-
-    # Use the machine available during inference.
-    config_dict["device"] = ("cuda" if torch.cuda.is_available() else "cpu" )
+    metadata = joblib.load(hybrid_metadata_path)
+    config_dict = metadata["sleepfm_config"]
+    config_dict["device"] = "cuda" if torch.cuda.is_available() else "cpu"
     config_dict["checkpoint_path"] = None
     config_dict["debug"] = False
-    config = SleepFMConfig( **config_dict )
+    config = SleepFMConfig(**config_dict)
+    setattr(config, "load_pretrained", False)
 
-    model = HybridStrategy(
+    hybrid_model = HybridStrategy(
         config=config,
-        handcrafted_dim=metadata[ "handcrafted_dim" ],
+        handcrafted_dim=metadata["handcrafted_dim"],
         num_classes=1,
     )
-
-    state_dict = torch.load( model_path, map_location=config.device, )
-    model.load_state_dict( state_dict, strict=True, )
-    model.to(config.device)
-    model.eval()
+    state_dict = torch.load(model_path, map_location=config.device)
+    hybrid_model.load_state_dict(state_dict, strict=True)
+    hybrid_model.to(config.device)
+    hybrid_model.eval()
 
     return {
-        "model": model,
+        "model_type": "hybrid",
+        "pipeline_mode": metadata.get("pipeline_mode", 3),
+        "pipeline_name": metadata.get("pipeline_name", PIPELINE_NAMES[3]),
+        "model": hybrid_model,
         "config": config,
         "selected_features": metadata["selected_features"],
         "handcrafted_imputer": metadata["handcrafted_imputer"],
@@ -670,82 +716,67 @@ def load_model(model_folder,verbose,):
 
 # Run your trained model. This function is *required*. You should edit this function to add your code, but do *not* change the
 # arguments of this function.
-def run_model( model,record,data_folder,verbose,):
-    hybrid_model = model["model"]
-    config = model["config"]
-
+def run_model(model, record, data_folder, verbose):
+    pipeline_mode = int(model.get("pipeline_mode", 3))
     selected_features = model["selected_features"]
-    imputer = model[ "handcrafted_imputer" ]
-    scaler = model[ "handcrafted_scaler" ]
-    threshold = model[ "threshold" ]
-    patient_id = record[ HEADERS["bids_folder"] ]
-    site_id = record[ HEADERS["site_id"] ]
-    session_id = record[ HEADERS["session_id"] ]
-    category_lookup = get_category_map( DEFAULT_CSV_PATH )
+    threshold = model["threshold"]
 
-    # Demographics
-    patient_data_file = os.path.join( data_folder, DEMOGRAPHICS_FILE, )
-    patient_data = load_demographics( patient_data_file, patient_id, session_id, )
-    demographic_features = ( extract_demographic_features( patient_data ) )
+    patient_id = record[HEADERS["bids_folder"]]
+    site_id = record[HEADERS["site_id"]]
+    session_id = record[HEADERS["session_id"]]
+    category_lookup = get_category_map(DEFAULT_CSV_PATH)
 
-    # Algorithmic annotations
+    # Demographics.
+    patient_data_file = os.path.join(data_folder, DEMOGRAPHICS_FILE)
+    patient_data = load_demographics(
+        patient_data_file, patient_id, session_id
+    )
+    demographic_features = extract_demographic_features(patient_data)
 
+    # Algorithmic annotations / hypnogram.
     algo_file = os.path.join(
         data_folder,
         ALGORITHMIC_ANNOTATIONS_SUBFOLDER,
         site_id,
         f"{patient_id}_ses-{session_id}_caisr_annotations.edf",
     )
-
     if os.path.exists(algo_file):
-        algo_data, _ = load_signal_data( algo_file )
-        algorithmic_features = ( extract_algorithmic_annotations_features( algo_data ))
-
+        algo_data, _ = load_signal_data(algo_file)
+        algorithmic_features = extract_algorithmic_annotations_features(algo_data)
         if "stage_caisr" in algo_data:
-            hypno = np.round( algo_data["stage_caisr"].flatten() ).astype(int)
+            hypno = np.round(algo_data["stage_caisr"].flatten()).astype(int)
         else:
             hypno = None
-
     else:
-        algorithmic_features = np.zeros( 12, dtype=np.float32, )
+        algorithmic_features = np.zeros(12, dtype=np.float32)
         hypno = None
 
-    # Physiological signals
-
+    # Physiological signals are needed by every requested pipeline mode.
     phys_file = os.path.join(
         data_folder,
         PHYSIOLOGICAL_DATA_SUBFOLDER,
         site_id,
         f"{patient_id}_ses-{session_id}.edf",
     )
-
     if not os.path.exists(phys_file):
-        # The hybrid model fundamentally expects the PSG branch.
-        # Neutral fallback is safer than crashing Challenge scoring.
         if verbose:
             print(
                 f"Missing physiological data for {patient_id}; "
                 "returning neutral probability."
             )
-
         return 0, 0.5
 
-    physiological_data, physiological_fs = ( load_signal_data( phys_file ) )
-
-    # Handcrafted branch
-
-    physiological_features = (
-        extract_physiological_features(
-            physiological_data,
-            physiological_fs,
-            csv_path=DEFAULT_CSV_PATH,
-            category_lookup=category_lookup,
-            hypnogram=hypno,
-            patient_id=patient_id,
-            session_id=session_id,
-        )
+    physiological_data, physiological_fs = load_signal_data(phys_file)
+    physiological_features = extract_physiological_features(
+        physiological_data,
+        physiological_fs,
+        csv_path=DEFAULT_CSV_PATH,
+        category_lookup=category_lookup,
+        hypnogram=hypno,
+        patient_id=patient_id,
+        session_id=session_id,
+        category_filter=(model.get("feature_category") if pipeline_mode == 1 else None),
     )
-
     feat_df = add_patient_level_features(
         physiological_features,
         demographic_features,
@@ -753,41 +784,68 @@ def run_model( model,record,data_folder,verbose,):
         label=None,
     )
 
-    handcrafted_raw = feat_df[ selected_features ].to_numpy()
+    # Reindex rather than direct indexing: if a training column is absent in
+    # a hidden record it becomes NaN and the fitted imputer handles it.
+    handcrafted_raw = feat_df.reindex(columns=selected_features).copy()
+    for col in handcrafted_raw.columns:
+        if handcrafted_raw[col].dtype == bool:
+            handcrafted_raw[col] = handcrafted_raw[col].astype(np.int8)
 
-    handcrafted_imputed = ( imputer.transform( handcrafted_raw ) )
+    # Modes 1 and 2 terminate here with XGBoost.
+    if pipeline_mode in (1, 2):
+        imputer = model["imputer"]
+        X = imputer.transform(handcrafted_raw)
+        probability_output = float(model["model"].predict_proba(X)[0, 1])
+        binary_output = int(probability_output >= threshold)
+        return binary_output, probability_output
 
-    handcrafted_matrix = ( scaler.transform( handcrafted_imputed ).astype(np.float32) )
+    # Mode 3: handcrafted + SleepFM hybrid.
+    hybrid_model = model["model"]
+    config = model["config"]
+    imputer = model["handcrafted_imputer"]
+    scaler = model["handcrafted_scaler"]
 
-    if not np.isfinite( handcrafted_matrix ).all():
+    handcrafted_imputed = imputer.transform(handcrafted_raw)
+    handcrafted_matrix = scaler.transform(
+        handcrafted_imputed
+    ).astype(np.float32)
+    if not np.isfinite(handcrafted_matrix).all():
         raise RuntimeError(
-            f"Non-finite handcrafted values "
-            f"for patient {patient_id}."
+            f"Non-finite handcrafted values for patient {patient_id}."
         )
-
-    handcrafted_tensor = torch.tensor(handcrafted_matrix,dtype=torch.float32,device=config.device,)
-
-    # SleepFM branch
-    modality_signals, modality_fs = (
-        build_sleepfm_modalities(physiological_data,physiological_fs,category_lookup,csv_path=DEFAULT_CSV_PATH,)
+    handcrafted_tensor = torch.tensor(
+        handcrafted_matrix,
+        dtype=torch.float32,
+        device=config.device,
     )
 
-    sleepfm_preprocessor = ( SleepFMPreprocessor(config) )
-    sleepfm_embedding = (
-        extract_sleepfm_patient_embedding(hybrid_model.backbone,sleepfm_preprocessor,modality_signals,modality_fs,)
+    modality_signals, modality_fs = build_sleepfm_modalities(
+        physiological_data,
+        physiological_fs,
+        category_lookup,
+        csv_path=DEFAULT_CSV_PATH,
     )
-
-    sleepfm_tensor = torch.tensor( sleepfm_embedding, dtype=torch.float32, device=config.device, ).unsqueeze(0)
-
-    # Hybrid inference
+    sleepfm_preprocessor = SleepFMPreprocessor(config)
+    sleepfm_embedding = extract_sleepfm_patient_embedding(
+        hybrid_model.backbone,
+        sleepfm_preprocessor,
+        modality_signals,
+        modality_fs,
+    )
+    sleepfm_tensor = torch.tensor(
+        sleepfm_embedding,
+        dtype=torch.float32,
+        device=config.device,
+    ).unsqueeze(0)
 
     hybrid_model.eval()
     with torch.no_grad():
-        logits = ( hybrid_model.forward_from_embeddings( sleepfm_tensor, handcrafted_tensor, ) )
-        probability_output = torch.sigmoid( logits ).item()
-    binary_output = int( probability_output >= threshold )
-
-    return (binary_output, probability_output, )
+        logits = hybrid_model.forward_from_embeddings(
+            sleepfm_tensor, handcrafted_tensor
+        )
+        probability_output = torch.sigmoid(logits).item()
+    binary_output = int(probability_output >= threshold)
+    return binary_output, probability_output
 
 
 ################################################################################
@@ -799,10 +857,8 @@ def run_model( model,record,data_folder,verbose,):
 def extract_demographic_features(data):
     """
     Extracts and encodes demographic features from a metadata dictionary.
-    
     Inputs:
         data (dict): A dictionary containing patient metadata (e.g., from a CSV row).
-    
     Returns:
         np.array: A feature vector of length 11:
             - [0]: Age (Continuous)
@@ -848,39 +904,57 @@ def extract_demographic_features(data):
     bmi = np.array([bmi])
 
     # 5. Concatenate all components into a single vector (1 + 3 + 5 + 1 = 10)
-    
     return np.concatenate([age, sex_vec, race_vec, bmi])
 
 
 def extract_physiological_features(physiological_data, physiological_fs,
                                    csv_path=DEFAULT_CSV_PATH,
                                    category_lookup=get_category_map(DEFAULT_CSV_PATH),
-                                   hypnogram=None, patient_id="Unknown", session_id="Unknown"):
+                                   hypnogram=None, patient_id="Unknown", session_id="Unknown",
+                                   category_filter=None):
     """
     Standardizes channels and extracts statistical/spectral features.
     """
-    feature_debug.update_success("extract_physiological_features", patient_id=patient_id,
-                                 message="Starting physiological extraction")
+    feature_debug.update_success("extract_physiological_features", patient_id=patient_id,message="Starting physiological extraction")
     original_labels = list(physiological_data.keys())
 
-    # Step 1: Load rules and standardize names
-    # Note: Use script-relative path or absolute path for robustness
+    
     rename_rules = load_rename_rules(os.path.abspath(csv_path))
     rename_map, cols_to_drop = standardize_channel_names_rename_only(
         original_labels, rename_rules)
 
-    # Step 2: Apply renaming to BOTH signals and their corresponding FS
+    
     processed_channels = {}
     processed_fs = {}
     for old_label, data in physiological_data.items():
         if old_label in cols_to_drop:
             continue
         new_label = rename_map.get(old_label, old_label.lower())
+
+        if category_filter is not None:
+            requested = str(category_filter).strip().lower()
+            actual = str(category_lookup.get(new_label, "unknown")).strip().lower()
+            if requested == "emg":
+                keep_channel = actual in {"leg emg", "chin emg", "emg"}
+            else:
+                keep_channel = actual == requested
+            if not keep_channel:
+                continue
+
         processed_channels[new_label] = data
         # Mapping the sampling rate to the new label
         processed_fs[new_label] = physiological_fs.get(old_label, 200.0)  # Default to 200 if missing
 
-    feature_debug.update_success("channels standardized", patient_id=patient_id, message="Renamed channels standard")
+    feature_debug.update_success(
+        "channels standardized",
+        patient_id=patient_id,
+        message=(
+            f"Renamed channels standard; category_filter={category_filter}; "
+            f"kept_channels={len(processed_channels)}"
+        ),
+    )
+    if not processed_channels:
+        raise RuntimeError(f"No physiological channels remained after category_filter={category_filter!r}. Debug messages: {team_debug.summary()}")
 
     class FakeRaw:
         def __init__(self, data_dict, fs_dict):
@@ -894,8 +968,7 @@ def extract_physiological_features(physiological_data, physiological_fs,
             return sig.reshape(1, -1), None
 
     raw_psg = FakeRaw(processed_channels, processed_fs)
-    quality_df = assess_signal_quality(raw_psg, category_lookup, patient_id=patient_id, session_id=session_id,
-                                       hypnogram=hypnogram)
+    quality_df = assess_signal_quality(raw_psg, category_lookup, patient_id=patient_id, session_id=session_id,hypnogram=hypnogram)
     # quality_df["subject"]=patient_id
     # quality_df["session"]=session_id
     print(f"Shape originally {quality_df.shape}")
@@ -910,8 +983,7 @@ def extract_physiological_features(physiological_data, physiological_fs,
     feature_debug.update_success("pivot complete", patient_id=patient_id,
                                  message="Pivot transformation matrix constructed")
     print(f"Shape after pivoting {feature_df.shape}")
-    valid_cols = [col for col in feature_df.columns
-                  if col[0] in valid_features.get(col[1], [])]
+    valid_cols = [col for col in feature_df.columns if col[0] in valid_features.get(col[1], [])]
     feature_df = feature_df[valid_cols]
     print(f"Shape after filtering invalid columns {feature_df.shape}")
     feature_df.columns = [f"{col[1]}-{col[2]}-{col[3]}-{col[4]}-{col[0]}" if isinstance(col, tuple) else col
@@ -922,8 +994,7 @@ def extract_physiological_features(physiological_data, physiological_fs,
 
     feature_df["subject"] = feature_df.index.get_level_values(0)
     feature_df["session"] = feature_df.index.get_level_values(1)
-    feature_debug.update_success("reindex complete", patient_id=patient_id,
-                                 message="Feature columns reindexed to master format")
+    feature_debug.update_success("reindex complete", patient_id=patient_id, message="Feature columns reindexed to master format")
     return feature_df.reset_index(drop=True)
 
 
@@ -1073,25 +1144,26 @@ def extract_human_annotations_features(human_data):
 
 
 # Save your trained model.
-def save_model( model_folder, model, selected_features, handcrafted_imputer, handcrafted_scaler, config,):
-    os.makedirs(model_folder, exist_ok=True, )
+def save_model(model_folder, model, selected_features, handcrafted_imputer, handcrafted_scaler, config, pipeline_mode=3):
+    os.makedirs(model_folder, exist_ok=True)
+    # Prevent load_model() from seeing stale XGBoost artifacts from another mode.
+    for stale_name in (XGB_MODEL_FILENAME, XGB_METADATA_FILENAME):
+        stale_path = os.path.join(model_folder, stale_name)
+        if os.path.exists(stale_path):
+            os.remove(stale_path)
     model_path = os.path.join( model_folder, HYBRID_MODEL_FILENAME, )
     metadata_path = os.path.join( model_folder, HYBRID_METADATA_FILENAME,)
 
-    # The complete HybridStrategy state_dict includes:
-    # - SleepFM backbone
-    # - handcrafted projection
-    # - fusion classifier
+    # The complete HybridStrategy state_dict includes: SleepFM backbone , handcrafted projection, fusion classifier
     torch.save( model.state_dict(), model_path, )
     config_dict = asdict(config)
 
-    # The full SleepFM backbone has just been saved into
-    # hybrid_model.pt, so inference no longer needs the original
-    # external pretrained checkpoint.
     config_dict["checkpoint_path"] = None
 
     metadata = {
         "model_type": "HybridStrategy",
+        "pipeline_mode": int(pipeline_mode),
+        "pipeline_name": PIPELINE_NAMES[int(pipeline_mode)],
         "selected_features": list(selected_features),
         "handcrafted_dim": len(selected_features),
         "handcrafted_imputer": handcrafted_imputer,
