@@ -55,10 +55,10 @@ XGB_METADATA_FILENAME = "xgb_metadata.sav"
 # 1 = Handcrafted feature extraction -> XGBoost (no stratified PCA/RFE ranking)
 # 2 = Handcrafted feature extraction -> stratified PCA/RFE selection -> XGBoost
 # 3 = Full handcrafted + stratified selection + SleepFM hybrid pipeline
-PIPELINE_MODE = 3
+PIPELINE_MODE = 1
 
 # Used only by PIPELINE_MODE == 1. Valid exemples are the feature categories
-FEATURE_CATEGORY = None
+FEATURE_CATEGORY = "emg"
 # When FEATURE_CATEGORY is set, retain demographics and CAISR annotation features too.
 INCLUDE_PATIENT_LEVEL_FEATURES_WITH_CATEGORY = True
 
