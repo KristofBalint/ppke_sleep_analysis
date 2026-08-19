@@ -267,7 +267,7 @@ def get_available_handcrafted_features(full_df, category=None, include_patient_l
     else:
         category = str(category).strip().lower()
         if category == "emg":
-            physiological = [c for c in all_featuresif c.lower().startswith("leg emg-") or c.lower().startswith("chin emg-")]
+            physiological = [c for c in all_features if c.lower().startswith("leg emg-") or c.lower().startswith("chin emg-")]
         else:
             prefix = category + "-"
             physiological = [c for c in all_features if c.lower().startswith(prefix)]
@@ -455,15 +455,9 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
                 continue
 
             physiological_data, physiological_fs = load_signal_data(physiological_data_file)
-            physiological_features = extract_physiological_features(
-                physiological_data,
-                physiological_fs,
-                csv_path=csv_path,
-                category_lookup=category_lookup,
-                hypnogram=hypno,
-                patient_id=patient_id,
-                session_id=session_id,
-                category_filter=(FEATURE_CATEGORY if PIPELINE_MODE == 1 else None),
+            physiological_features = extract_physiological_features( 
+                physiological_data, physiological_fs, csv_path=csv_path, category_lookup=category_lookup,
+                hypnogram=hypno, patient_id=patient_id, session_id=session_id, category_filter=(FEATURE_CATEGORY if PIPELINE_MODE == 1 else None)
             )
             team_debug.update_success(
                 "feature extraction returned",
@@ -493,12 +487,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             # if SleepFM fails for a patient.
             sleepfm_embedding = None
             if PIPELINE_MODE == 3:
-                modality_signals, modality_fs = build_sleepfm_modalities(
-                    physiological_data,
-                    physiological_fs,
-                    category_lookup,
-                    csv_path=csv_path,
-                )
+                modality_signals, modality_fs = build_sleepfm_modalities( physiological_data, physiological_fs, category_lookup, csv_path=csv_path )
                 modality_counts = {modality: len(channels)for modality, channels in modality_signals.items()}
                 team_debug.update_success("sleepfm modalities built", patient_id=patient_id,iteration=i, message=f"channels={modality_counts}", )
                 sleepfm_embedding = extract_sleepfm_patient_embedding(sleepfm_encoder,sleepfm_preprocessor, modality_signals,modality_fs)
@@ -552,7 +541,6 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
         full_df[col] = full_df[col].astype(bool)
 
     params = get_xgb_params()
-
     
     # MODE 1: feature extraction -> XGBoost, no stratified PCA/RFE.
     if PIPELINE_MODE == 1:
@@ -608,6 +596,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
         raise RuntimeError(
             "Hybrid patient alignment failed: "
             f"HC={len(full_df)}, SleepFM={len(sleepfm_matrix)}, labels={len(y)}"
+            f"Debug messages: {team_debug.summary()}"
         )
 
     handcrafted_raw = full_df[selected_features].to_numpy()
@@ -617,33 +606,16 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     handcrafted_matrix = scaler.fit_transform( handcrafted_imputed).astype(np.float32)
 
     if not np.isfinite(handcrafted_matrix).all():
-        raise RuntimeError(
-            "Non-finite handcrafted values remain after final preprocessing."
-        )
+        raise RuntimeError( "Non-finite handcrafted values remain after final preprocessing." )
 
-    model = HybridStrategy(
-        config=config,
-        handcrafted_dim=handcrafted_matrix.shape[1],
-        num_classes=1,
-    )
+    model = HybridStrategy(config=config, handcrafted_dim=handcrafted_matrix.shape[1], num_classes=1 )
     model.backbone = sleepfm_encoder
     freeze_backbone(model.backbone)
-    model = train_hybrid_head(
-        model,
-        handcrafted_matrix,
-        sleepfm_matrix,
-        y,
-        config,
-    )
+    model = train_hybrid_head(model, handcrafted_matrix, sleepfm_matrix, y, config )
 
     save_model(
-        model_folder=model_folder,
-        model=model,
-        selected_features=selected_features,
-        handcrafted_imputer=imputer,
-        handcrafted_scaler=scaler,
-        config=config,
-        pipeline_mode=3,
+        model_folder=model_folder, model=model, selected_features=selected_features,
+        handcrafted_imputer=imputer, handcrafted_scaler=scaler, config=config, pipeline_mode=3
     )
     if verbose:
         print("Mode 3 hybrid training complete.")
