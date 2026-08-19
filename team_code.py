@@ -58,7 +58,7 @@ XGB_METADATA_FILENAME = "xgb_metadata.sav"
 PIPELINE_MODE = 1
 
 # Used only by PIPELINE_MODE == 1. Valid exemples are the feature categories
-FEATURE_CATEGORY = "eeg"
+FEATURE_CATEGORY = "resp"
 # When FEATURE_CATEGORY is set, retain demographics and CAISR annotation features too.
 INCLUDE_PATIENT_LEVEL_FEATURES_WITH_CATEGORY = True
 
