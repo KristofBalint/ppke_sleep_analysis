@@ -952,7 +952,7 @@ def stratified_pca_feature_selection(df, y, params):
                             "N1_pct", "N2_pct", "N3_pct", "R_pct", "efficiency",
                             "W_prob", "N3_prob", "Ar_prob"]
 
-    categories = ['emg', 'resp'] #'ecg', 'eeg', 'eog', ] # temporarily limit the category stratas
+    categories = ['emg', 'resp', 'ecg', 'eeg', 'eog' ] # temporarily limit the category stratas
     stages = ["N1", "N2", "N3", "Wake", "REM"]
 
     groups = df["subject"]
