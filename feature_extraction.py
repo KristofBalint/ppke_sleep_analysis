@@ -533,7 +533,7 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
                 row_dict["sw_spindle_delay_std"] = 0
 
             savable = pd.DataFrame([row_dict])
-            savable = savable.reindex(valid_features["eeg"])
+            savable = savable.reindex(columns=valid_features["eeg"])
             savable.to_csv("backup_eeg.csv", mode="a", header=False, index=False)
 
         except Exception as e:
@@ -573,7 +573,7 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
             row_dict["sw_spindle_delay_mean"] = 0
             row_dict["sw_spindle_delay_std"] = 0
             savable = pd.DataFrame([row_dict])
-            savable = savable.reindex(valid_features["eeg"])
+            savable = savable.reindex(columns=valid_features["eeg"])
             savable.to_csv("backup_eeg.csv", mode="a", header=False, index=False)
 
     elif category == "ecg":
@@ -631,7 +631,7 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
             row_dict["LF_HF_RATIO"] = hrv_biomarker["LF_HF_RATIO"]
 
             savable = pd.DataFrame([row_dict])
-            savable = savable.reindex(valid_features["ecg"])
+            savable = savable.reindex(columns=valid_features["ecg"])
             savable.to_csv("backup_ecg.csv", mode="a", header=False, index=False)
         except Exception as e:
             feature_debug.update_failure("ECG processed", patient_id=subject_id, message=f"ECG error: {e}", exc=e)
@@ -661,7 +661,7 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
             row_dict["HF_NORM"] = np.nan
             row_dict["LF_HF_RATIO"] = np.nan
             savable = pd.DataFrame([row_dict])
-            savable = savable.reindex(valid_features["ecg"])
+            savable = savable.reindex(columns=valid_features["ecg"])
             savable.to_csv("backup_ecg.csv", mode="a", header=False, index=False)
 
     elif category in ["chin emg", "leg emg"]:
@@ -673,14 +673,14 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
             row_dict["energy_ratio_chunks"] = tsf.energy_ratio_by_chunks(data, param=[{"num_segments": 10, "segment_focus": 5}] )[0][1]
             row_dict["num_peaks"] = tsf.number_peaks(data, n=3)
             savable = pd.DataFrame([row_dict])
-            savable = savable.reindex(valid_features["leg emg"])
+            savable = savable.reindex(columns=valid_features["leg emg"])
             savable.to_csv("backup_emg.csv", mode="a", header=False, index=False)
         except Exception as e:
             feature_debug.update_failure("EMG processed", patient_id=subject_id, message=f"EMG error: {e}", exc=e)
             print(f"EMG extraction error: {e}")
             traceback.print_exc()
             savable = pd.DataFrame([row_dict])
-            savable = savable.reindex(valid_features["leg emg"])
+            savable = savable.reindex(columns=valid_features["leg emg"])
             savable.to_csv("backup_emg.csv", mode="a", header=False, index=False)
 
     elif category == "resp":
@@ -703,7 +703,7 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
             row_dict["resp_variability"] = resp_var
             row_dict["linear_trend"] = tsf.linear_trend(data, param=[{"attr": "slope"}])[0][1]
             savable = pd.DataFrame([row_dict])
-            savable = savable.reindex(valid_features["resp"])
+            savable = savable.reindex(columns=valid_features["resp"])
             savable.to_csv("backup_resp.csv", mode="a", header=False, index=False)
         except Exception as e:
             feature_debug.update_failure("resp processed", patient_id=subject_id, message=f"Resp error: {e}", exc=e)
@@ -713,13 +713,13 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
             row_dict["resp_variability"] = np.nan
             row_dict["linear_trend"] = np.nan
             savable = pd.DataFrame([row_dict])
-            savable = savable.reindex(valid_features["resp"])
+            savable = savable.reindex(columns=valid_features["resp"])
             savable.to_csv("backup_resp.csv", mode="a", header=False, index=False)
 
     elif category == "eog":
         feature_debug.update_success("EOG processed", patient_id=subject_id, message=f"Channel {ch_name}")
         savable = pd.DataFrame([row_dict])
-        savable = savable.reindex(valid_features["eog"])
+        savable = savable.reindex(columns=valid_features["eog"])
         savable.to_csv("backup_eog.csv", mode="a", header=False, index=False)
 
     return row_dict
