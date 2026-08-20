@@ -45,7 +45,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Build the absolute path to the CSV file relative to the script location
 DEFAULT_CSV_PATH = os.path.join(SCRIPT_DIR, 'channel_table.csv')
 #SleepFM setup
-checkpoint_path = Path(SCRIPT_DIR) / "SleepFM" / "checkpoint" / "model_diagnosis" / "best.pth"
+checkpoint_path = Path(SCRIPT_DIR) / "SleepFM" / "checkpoint" / "models_diagnosis" / "best.pth"
 HYBRID_MODEL_FILENAME = "hybrid_model.pt"
 HYBRID_METADATA_FILENAME = "hybrid_metadata.sav"
 XGB_MODEL_FILENAME = "xgb_model.sav"
