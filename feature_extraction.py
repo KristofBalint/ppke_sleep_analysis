@@ -794,11 +794,9 @@ def process_channel(ch_name, raw_psg, category_lookup, subject_id, session_id, h
             return stage_results
         else:
             df = pd.DataFrame(stage_results)
-            normal_cols = [c for c in df.columns if
-                           c not in (["transition_id", "transition_type"] + transition_only_features)]
-            normal_df = (df.groupby("stage")[normal_cols].mean(numeric_only=True).reset_index())
-            transition_df = (df.groupby(["stage", "transition_type"])[transition_only_features].mean(
-                numeric_only=True).reset_index())
+            normal_cols = [c for c in df.columns if c not in ( ["transition_id", "transition_type"] + transition_features )]
+            normal_df = ( df.groupby("stage")[normal_cols].mean(numeric_only=True).reset_index() )
+            transition_df = (df.groupby(["stage", "transition_type"])[transition_features].mean(numeric_only=True).reset_index())
             pivoted = transition_df.pivot(index="stage", columns="transition_type", values=transition_features)
             pivoted.columns = [f"{trans}_{feat}" for feat, trans in pivoted.columns]
             pivoted = pivoted.reindex(columns=transition_only_features, fill_value=np.nan).reset_index()
@@ -1077,7 +1075,7 @@ def stratified_pca_feature_selection(df, y, params):
             if best_tr_subset.shape[1] < comp:
                 continue
 
-            imputer = SimpleImputer(strategy='median', add_indicator=True)
+            imputer = SimpleImputer(strategy='median', add_indicator=False)
             scaler = StandardScaler()
             pca = PCA(n_components=comp, random_state=42)
 
