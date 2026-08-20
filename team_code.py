@@ -940,7 +940,7 @@ def extract_physiological_features(physiological_data, physiological_fs,
             return sig.reshape(1, -1), None
 
     raw_psg = FakeRaw(processed_channels, processed_fs)
-    quality_df = assess_signal_quality(raw_psg, category_lookup, patient_id=patient_id, session_id=session_id,hypnogram=hypnogram)
+    quality_df = assess_signal_quality(raw_psg, category_lookup, subject_id=patient_id, session_id=session_id,hypnogram=hypnogram)
     # quality_df["subject"]=patient_id
     # quality_df["session"]=session_id
     print(f"Shape originally {quality_df.shape}")
@@ -952,8 +952,7 @@ def extract_physiological_features(physiological_data, physiological_fs,
     print(f"Shape after reindexing {quality_df.shape}")
     feature_df = quality_df.pivot(index=['subject', 'session'],
                                   columns=['category', 'channel', 'stage', 'transition_id'])
-    feature_debug.update_success("pivot complete", patient_id=patient_id,
-                                 message="Pivot transformation matrix constructed")
+    feature_debug.update_success("pivot complete", patient_id=patient_id, message="Pivot transformation matrix constructed")
     print(f"Shape after pivoting {feature_df.shape}")
     valid_cols = [col for col in feature_df.columns if col[0] in valid_features.get(col[1], [])]
     feature_df = feature_df[valid_cols]
