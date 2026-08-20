@@ -146,6 +146,7 @@ class DebugMessageCollector:
         "last_success_iteration",
         "first_failure_patient",
         "first_failure_iteration",
+        "failure_count",
         "last_message",
         "traceback",
     ]
