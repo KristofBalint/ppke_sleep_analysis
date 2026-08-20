@@ -811,14 +811,19 @@ def process_channel(ch_name, raw_psg, category_lookup, subject_id, session_id, h
         print(f"Something went wrong in channel processing for {ch_name}: {e}")
         try:
             master_feature_names = get_master_feature_names(category_lookup)
-            fallback_dict = {feat: 0.0 for feat in master_feature_names}
+            fallback_dict = { feat: np.nan for feat in valid_features.get(category, generic_features)}
         except Exception:
             fallback_dict = {}
 
-        fallback_dict["channel"] = ch_name
-        fallback_dict["stage"] = "All"
-        fallback_dict["transition_id"] = 0
-        fallback_dict["transition_type"] = "None"
+        fallback_dict.update({
+            "subject": subject_id,
+            "session": session_id,
+            "channel": ch_name,
+            "category": category,
+            "stage": "All",
+            "transition_id": -1,
+            "transition_type": "None",
+        })
         return pd.DataFrame([fallback_dict])
 
 
