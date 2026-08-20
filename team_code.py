@@ -957,8 +957,7 @@ def extract_physiological_features(physiological_data, physiological_fs,
     valid_cols = [col for col in feature_df.columns if col[0] in valid_features.get(col[1], [])]
     feature_df = feature_df[valid_cols]
     print(f"Shape after filtering invalid columns {feature_df.shape}")
-    feature_df.columns = [f"{col[1]}-{col[2]}-{col[3]}-{col[4]}-{col[0]}" if isinstance(col, tuple) else col
-                          for col in feature_df.columns.values]
+    feature_df.columns = [f"{col[1]}-{col[2]}-{col[3]}-{col[0]}" if isinstance(col, tuple) else col for col in feature_df.columns.values]
 
     MASTER_FEATURE_NAMES = get_master_feature_names(category_lookup)
     feature_df = feature_df.reindex(columns=MASTER_FEATURE_NAMES, fill_value=np.nan)
