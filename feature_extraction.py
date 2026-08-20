@@ -726,6 +726,7 @@ def extract_features(data, fs, ch_name, category, subject_id, session_id, stage_
 
 
 def process_channel(ch_name, raw_psg, category_lookup, subject_id, session_id, hypnogram=None, processed=True,aggregate=True):
+    category = category_lookup.get(ch_name, "unknown")
     try:
         data, _ = raw_psg[ch_name]
         data = data.ravel()
@@ -734,8 +735,6 @@ def process_channel(ch_name, raw_psg, category_lookup, subject_id, session_id, h
         data = data[~np.isnan(data)]
         if len(data) < 10:
             return []
-
-        category = category_lookup.get(ch_name, "unknown")
 
         if hypnogram is None:
             res = extract_features(data,fs,ch_name,category,subject_id,session_id,"All",0,"None",processed=processed,)
