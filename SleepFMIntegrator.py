@@ -1370,7 +1370,7 @@ def train_hybrid_head(model,handcrafted_matrix,sleepfm_matrix,labels,config,epoc
     
         for hc_batch, sleepfm_batch, y_batch in loader:
     
-            hc_batch = hc_batch.to(device)#nigger
+            hc_batch = hc_batch.to(device)
             sleepfm_batch = sleepfm_batch.to(device)
             y_batch = y_batch.to(device)
         
