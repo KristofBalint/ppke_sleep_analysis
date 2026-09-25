@@ -54,7 +54,7 @@ def plot_leads(signals, fs, leads=range(12), labels=[''], peaks=None, figsize=(8
     plt.legend(loc='upper right')
     plt.show()
 
-def unfuck_old():
+def untangle_old():
     if not hasattr(scipy.stats,
                    'median_absolute_deviation'):  # silly little renames because pobm is an old package with outdated functions
         scipy.stats.median_absolute_deviation = scipy.stats.median_abs_deviation
