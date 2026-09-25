@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 import scipy
-from utils import unfuck_old
-unfuck_old()
+from utils import untangle_old
+untangle_old()
 from pobm.obm.desat import DesaturationsMeasures, desat_embedding
 from pobm.obm.complex import ComplexityMeasures
 from pobm.obm.burden import HypoxicBurdenMeasures
