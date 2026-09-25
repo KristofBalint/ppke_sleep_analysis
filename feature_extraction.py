@@ -6,7 +6,7 @@ from scipy.signal import correlate, find_peaks, welch, hilbert
 from helper_code import *
 import neurokit2 as nk
 import yasa
-from utils import HiddenPrints, unfuck_old, DebugMessageCollector
+from utils import HiddenPrints, untangle_old, DebugMessageCollector
 from pecg import Preprocessing as Pre
 from pecg.ecg import FiducialPoints as Fp
 import wfdb
